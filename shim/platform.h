@@ -1,0 +1,19 @@
+#pragma once
+/* Physical addresses verified against bluejay's recovery FDT. */
+#if defined(SHIM_BLUEJAY)
+#define PLATFORM_NAME "bluejay / GS101"
+#define PLATFORM_FB 0xfac00000UL
+#define PLATFORM_GICD 0x10400000UL
+#define PLATFORM_GICR 0x10440000UL
+#define PLATFORM_VTIMER_INTID 27
+#define PLATFORM_PTIMER_INTID 30
+#define PLATFORM_UFS 0x14700000UL
+#else
+#define PLATFORM_NAME "sweet / SM7150"
+#define PLATFORM_FB 0x9c000000UL
+#define PLATFORM_GICD 0x17a00000UL
+#define PLATFORM_GICR 0x17a60000UL
+#define PLATFORM_VTIMER_INTID 19
+#define PLATFORM_PTIMER_INTID 18
+#define PLATFORM_UFS 0x01d84000UL
+#endif

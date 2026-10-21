@@ -79,18 +79,38 @@ typedef void (*xnu_entry_t)(uint64_t boot_args_pa);
 const char *loader_boot(uintptr_t dtb)
 {
 	uint64_t rd_start, rd_end;
-
+#if defined(SHIM_BLUEJAY)
+	/* Pixel v4 concatenates vendor and generic ramdisks. Embed the payload
+	 * in the compressed Image, so the vendor ramdisk cannot obscure it. */
+	(void)dtb;
+	extern const char _embedded_payload_start[], _embedded_payload_end[];
+	rd_start = (uintptr_t)_embedded_payload_start;
+	rd_end = (uintptr_t)_embedded_payload_end;
+	if (rd_end == rd_start)
+		return "diagnostic image (no XNU payload)";
+#else
 	if (!fdt_chosen_u64(dtb, "linux,initrd-start", &rd_start) ||
 	    !fdt_chosen_u64(dtb, "linux,initrd-end", &rd_end))
 		return "no initrd in /chosen";
+#endif
 	con_hex2("INITRD", "lo=", rd_start, "hi=", rd_end);
 
 	const struct payload *p = (const struct payload *)rd_start;
+	if (rd_end < rd_start || rd_end - rd_start < sizeof(*p))
+		return "payload truncated";
 	if (!magic_ok(p->magic))
 		return "no SWEETXNU payload";
-	if (p->version != 1 || (p->adt_off & 7) || (rd_start & 7))
+	if (p->version != 1 || !p->nsegs || p->nsegs > 32 ||
+	    p->nsegs * sizeof(struct payload_seg) > rd_end - rd_start - sizeof(*p) ||
+	    p->adt_off > rd_end - rd_start || p->adt_size > rd_end - rd_start - p->adt_off ||
+	    (p->adt_off & 7) || (rd_start & 7))
 		return "bad payload header";
 
+#if defined(SHIM_BLUEJAY)
+	if (p->phys_base != 0x880000000UL || !p->mem_size ||
+	    p->mem_size > 0xfff00000UL)
+		return "payload RAM outside verified high bank";
+#endif
 	uint64_t pa_of_va_base = p->phys_base - p->virt_base;	/* pa = va + this */
 	con_hex2("PHYS", "base=", p->phys_base, "size=", p->mem_size);
 	con_hex("VIRT", p->virt_base);
@@ -99,6 +119,23 @@ const char *loader_boot(uintptr_t dtb)
 	/* The payload must not overlap where the kernel goes. */
 	if (rd_end > p->phys_base && rd_start < p->phys_base + p->mem_size)
 		return "ramdisk overlaps kernel memory";
+
+	/* Validate the complete image before copying any segment. */
+	for (uint32_t i = 0; i < p->nsegs; i++) {
+		const struct payload_seg *s = &p->segs[i];
+		if (s->vmaddr < p->virt_base || s->vmsize < s->file_size ||
+		    s->vmaddr - p->virt_base > p->mem_size ||
+		    s->vmsize > p->mem_size - (s->vmaddr - p->virt_base) ||
+		    s->file_off > rd_end - rd_start ||
+		    s->file_size > rd_end - rd_start - s->file_off ||
+		    (s->vmaddr & 7) || (s->file_off & 7))
+			return "segment outside payload or kernel RAM";
+	}
+	if (p->kernel_end < p->virt_base ||
+	    p->kernel_end - p->virt_base >= p->mem_size ||
+	    p->adt_size + 2 * PAGE_16K > p->mem_size - (p->kernel_end - p->virt_base) ||
+	    p->entry_va < p->virt_base || p->entry_va - p->virt_base >= p->mem_size)
+		return "boot metadata outside kernel RAM";
 
 	for (uint32_t i = 0; i < p->nsegs; i++) {
 		const struct payload_seg *s = &p->segs[i];

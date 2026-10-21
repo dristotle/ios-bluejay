@@ -16,8 +16,8 @@
 #define RESTART_BOOTLOADER	0x77665500U
 #define PSHOLD			0x0c264000UL
 
-#define GICD_BASE		0x17a00000UL
-#define GICR_BASE		0x17a60000UL
+#define GICD_BASE		PLATFORM_GICD
+#define GICR_BASE		PLATFORM_GICR
 #define GICR_SIZE		0x100000UL
 #define GICR_PE_SIZE		0x20000UL
 #define GICR_TYPER		0x08
@@ -30,8 +30,8 @@
 #define GICR_ISPENDR0		(GICR_SGI + 0x200)
 #define GICR_ISACTIVER0		(GICR_SGI + 0x300)
 #define GICR_ICFGR1		(GICR_SGI + 0xc04)
-#define VTIMER_INTID		19	/* DT: <GIC_PPI 3 ...>, not the usual 27 */
-#define PTIMER_INTID		18	/* DT: <GIC_PPI 2 ...> */
+#define VTIMER_INTID		PLATFORM_VTIMER_INTID	/* DT: <GIC_PPI 3 ...>, not the usual 27 */
+#define PTIMER_INTID		PLATFORM_PTIMER_INTID	/* DT: <GIC_PPI 2 ...> */
 #define SGI_INTID		1
 
 #define PSCI_VERSION		0x84000000UL
@@ -106,10 +106,14 @@ static void __attribute__((noreturn)) reset(unsigned after_s)
 	con_skip();
 	con_str("RESET", after_s > 20 ? "in 40s" : "in 20s");
 	delay_ms(after_s * 1000);
+#if !defined(SHIM_BLUEJAY)
 	wr32(IMEM_RESTART_REASON, RESTART_BOOTLOADER);
+#endif
 	__asm__ volatile("dsb sy" ::: "memory");
 	smc(PSCI_SYSTEM_RESET, 0, 0, 0);
+#if !defined(SHIM_BLUEJAY)
 	wr32(PSHOLD, 0);
+#endif
 	for (;;)
 		__asm__ volatile("wfe");
 }
@@ -316,10 +320,11 @@ static void test_gic(void)
 	uint32_t grp = rd32(r + GICR_IGROUPR0);
 	wr32(r + GICR_IGROUPR0, 0xffffffff);	/* NS view: secure bits are WI */
 	uint32_t en_before = rd32(r + GICR_ISENABLER0);
+	wr32(r + GICR_ICENABLER0, 0xffffffffu);
 	uint32_t pri_before = rd32(r + GICR_IPRIORITYR + 16);	/* INTIDs 16..19 */
 	for (int id = 0; id < 32; id++)
 		wr8(r + GICR_IPRIORITYR + id, 0xa0);
-	wr32(r + GICR_ISENABLER0, (1U << VTIMER_INTID) | (1U << PTIMER_INTID) | (1U << SGI_INTID));
+	wr32(r + GICR_ISENABLER0, (1U << VTIMER_INTID) | (1U << SGI_INTID));
 	con_hex2("ENABLE", "was=", en_before, "now=", rd32(r + GICR_ISENABLER0));
 	(void)grp;
 	(void)pri_before;
@@ -333,6 +338,7 @@ static void test_gic(void)
 	con_hex2("ICC", "ctlr=", ctlr, "grpen1=", rsr("icc_igrpen1_el1"));
 
 	stage = "gic vtimer";
+	wsr("cntp_ctl_el0", 0);
 	irq_window("VTIMER", r, VTIMER_INTID);
 	stage = "gic sgi";
 	irq_window("SGI1", r, SGI_INTID);
@@ -367,12 +373,43 @@ static uint64_t ticks_mem(void)
 
 static uint32_t to_us(uint64_t ticks)
 {
-	return ticks * 10 / 192;	/* 19.2 MHz */
+	return ticks * 1000000 / rsr("cntfrq_el0");	/* 19.2 MHz */
 }
 
 void shim_main(uint64_t dtb)
 {
 	struct mmu_info mi;
+#if defined(SHIM_BLUEJAY)
+	/* Enable continuous scanout before touching the inherited framebuffer. */
+	stage = "DECON workaround";
+	wr32(0x1c300030, 0x3061);
+	__asm__ volatile("dsb sy" ::: "memory");
+	con_clear(0xff101820);
+	con_str("SHIM", PLATFORM_NAME);
+	con_str("BOOT", "v4 + LZ4; temporary boot");
+	con_hex("DTB", dtb);
+	con_hex("MPIDR", rsr("mpidr_el1"));
+	con_hex("MIDR", rsr("midr_el1"));
+	con_hex("MMFR0", rsr("id_aa64mmfr0_el1"));
+	con_hex("CNTFRQ", rsr("cntfrq_el0"));
+	con_hex("PSCI", smc(PSCI_VERSION, 0, 0, 0));
+	stage = "loader";
+	const char *bj_why = loader_boot(dtb);
+	con_str("LOADER", bj_why);
+	stage = "UFS read-only";
+	test_ufs();
+	stage = "16K MMU";
+	int bj_rc = mmu_enable(&mi);
+	con_hex2("MMU", "rc=", bj_rc, "l3=", mi.n_l3);
+	if (!bj_rc) {
+		con_hex("PAR high", mmu_probe(0x880000000UL));
+		con_hex("PAR fb", mmu_probe(FB_PHYS));
+	}
+	test_gic();
+	con_str("DONE", "read-only probe; reset in 40s");
+	stage = "done";
+	reset(40);
+#endif
 
 	/* An xnu payload in the ramdisk means: boot it (MMU stays off). */
 	stage = "loader";

@@ -1,3 +1,58 @@
+## Active bluejay port — 2026-10-21
+
+This section supersedes upstream sweet observations below. Objective: boot
+real iPhone X iOS 16.7.16 (20H392) userland and XNU on Pixel 6a bluejay.
+No XNU or iOS boot on bluejay achieved yet.
+
+- Checkout `/home/catto/ios-bluejay`, branch `bluejay-port`, upstream 425b251.
+  Build fork `dristotle/ios-sweet`, authenticated as dristotle. No port CI yet.
+- User explicitly allows wiping userdata. Never modify win, esp, GPT,
+  boot/recovery, calibration or modem partitions. Use temporary fastboot boot.
+- Verified userdata sda27: start 18321200, size 118397552 in 512-byte units;
+  UFS 4096-byte start 2290150, count 14799694. Protect both ends of writes.
+  esp sda28: start 136720384, size 974848; win sda29: start 137695232,
+  size 111872000 in 512-byte units. GPT CRCs verified, no disk writes so far.
+- Backups, hashes, partition JSON and diagnostic images are outside git in
+  `C:/Users/Catto/ios-bluejay-artifacts`. Root adb recovery after each probe.
+- RAM: 0x80000000+2G (reserved holes); high contiguous 0x880000000+4G.
+  Use high bank for XNU. GICD 0x10400000, GICR 0x10440000+0x100000;
+  timer 24MHz, virtual INTID27, physical INTID30, PSCI SMC 1.1.
+  Boot A55 MIDR 0x412fd050, MPIDR0x81000000; core affinities 0x000..0x700.
+- Framebuffer 0xfac00000, 1080x2400, stride4320. Required 32-bit store
+  0x3061 to 0x1c300030. Map 32MB block0xfa000000 with 0xc00000 FB offset.
+  With 16K pages both framebuffer and high RAM are below the same 64GB L1
+  boundary; do not replace the existing RAM L2 table.
+- Pixel header v4 and legacy LZ4 confirmed. Embedded XNU payload avoids
+  Pixel's concatenated vendor/generic ramdisks. Shim validates high RAM.
+- Diagnostic003: MMUrc0, high RAM + framebuffer translations, 30 vtimer
+  IRQs and 10 SGIs, no stray IRQs. UFS doorbell stuck, OCS0xf.
+- Diagnostic004: clock ungating, UIC DME_GET + HIBER_EXIT consume commands.
+  DME power0x11 and CPort1. SCSI OCS7/check condition; not DMA failure.
+- Diagnostic005: REQUEST SENSE succeeds. Sense02/04/02 = logical unit not
+  ready, initializing command required. UPIU response01/status02 on TUR.
+- **Diagnostic006 UFS READ SUCCESS**, verified user photo
+  `C:/Users/Catto/Downloads/IMG_20261021_183230.jpg`: device WLUN0xd0
+  REQUEST SENSE then START STOP UNIT CDB1b0000001000 activates device.
+  Active/TUR/RSENSE/CAP/READ all rc0/OCS0/status0. LUN0 lastLBA0x1dc03ff,
+  block4096; MBRaa55, GPT EFI PART, userdata ext4, esp and win enumerated.
+  DMAUTRL0x880100000, UCD0x880101000, data0x880102000, GPT0x880104000.
+  Diagnostic006 image SHA256
+  5904c9029f0345a125669b80f629c56b9653105b1a90b7f316d51cc0d4f975d6.
+  No storage writes, no partitions flashed.
+- Kernel/buildtree from upstream successful CI39158169212:
+  xnu/out-upstream/kernel.development.sweet, research/upstream-build/xnu,
+  generated headers and complete research/upstream-build/run.log.
+- IPSW `C:/Users/Catto/Downloads/iOS/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw`.
+  OS087-86698-044.dmg4.73GB; SystemOS087-86593-047.dmg2.74GB;
+  AppOS087-86715-047.dmg10MB, DeviceTree.d22ap.im4p. No large extraction yet.
+  Built APFS-fuse research/apfs/build/apfs-fuse. WSL has no HFS+ driver;
+  prepare small Linux guest or equivalent bounded HFS+ staging method.
+  Host C free ~15GB; WSL virtual free space is misleading.
+
+Next: commit shim milestone; build BLUEJAY kernel patch using the verified
+UFS wake sequence and exact userdata limits, syntax check and macOS CI;
+prepare/tweak HFS+ root; install only in userdata; temporary boot real XNU.
+
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
 ## Agent handoff / active work (2026-10-15, latest)

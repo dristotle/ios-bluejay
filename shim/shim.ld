@@ -17,5 +17,11 @@ SECTIONS
 	_sec_stacks = .;
 	. += 8 * 0x1000;
 	_end = .;
+	. = ALIGN(4096);
+	_embedded_payload_start = .;
+	.payload : { *(.payload) }
+	_embedded_payload_end = .;
+	. = ALIGN(4096);
+	_image_end = .;
 	/DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

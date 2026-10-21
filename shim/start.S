@@ -7,8 +7,12 @@
 _head:
 	b	_start			/* code0 */
 	.long	0			/* code1 */
+#if defined(SHIM_BLUEJAY)
+	.quad	0x80000			/* Pixel arm64 Image load offset */
+#else
 	.quad	0			/* text_offset */
-	.quad	_end			/* image_size (linked at 0) */
+#endif
+	.quad	_image_end		/* image_size (linked at 0) */
 	.quad	0xa			/* flags: LE, 4K pages, place anywhere */
 	.quad	0			/* res2 */
 	.quad	0			/* res3 */
@@ -21,6 +25,26 @@ _head:
 _start:
 	msr	daifset, #0xf
 	mov	x19, x0			/* DTB pointer from ABL */
+#if defined(SHIM_BLUEJAY)
+	mrs	x1, CurrentEL
+	cmp	x1, #8
+	b.ne	.Lel1
+	mrs	x1, cnthctl_el2
+	orr	x1, x1, #3
+	msr	cnthctl_el2, x1
+	msr	cntvoff_el2, xzr
+	mov	x1, #(1 << 31)
+	msr	hcr_el2, x1
+	mov	x1, #0x0800
+	movk	x1, #0x30d0, lsl #16
+	msr	sctlr_el1, x1
+	mov	x1, #0x3c5
+	msr	spsr_el2, x1
+	adr	x1, .Lel1
+	msr	elr_el2, x1
+	eret
+.Lel1:
+#endif
 	msr	spsel, #1
 	adr	x1, _stack_top
 	mov	sp, x1

@@ -4,8 +4,8 @@
  * Runs with the MMU off (all memory Device, so DMA is coherent with no cache
  * maintenance). Dumps the UFSHCI registers ABL left behind and, if the host
  * is enabled and the link is up, points the transfer request list at our own
- * buffers and issues READ-ONLY SCSI commands on LUN 0. Nothing is ever
- * written to the device: there is no SCSI WRITE in this file.
+ * buffers and issues READ-ONLY SCSI commands on LUN 0. No sectors or persistent device attributes are written. Bluejay
+ * additionally uses START STOP UNIT on the device WLUN to resume runtime power.
  *
  * Register layout and descriptor formats: JEDEC UFSHCI (JESD223).
  */
@@ -13,7 +13,7 @@
 #include "console.h"
 #include "ufs.h"
 
-#define UFS_BASE	0x01d84000UL	/* ufshc@1d84000, sweet live FDT */
+#define UFS_BASE	PLATFORM_UFS	/* ufshc@1d84000, sweet live FDT */
 
 #define REG_CAP		0x00
 #define REG_VER		0x08
@@ -31,6 +31,15 @@
 #define HCS_UCRDY	(1u << 3)
 
 #define BLOCK		4096u
+#if defined(SHIM_BLUEJAY)
+#define UPIU_SIZE 1024u
+#define PRDT_OFF (2 * UPIU_SIZE)
+#define PRDT_MAX 4
+#else
+#define UPIU_SIZE 512u
+#define PRDT_OFF (2 * UPIU_SIZE)
+#define PRDT_MAX 4
+#endif
 
 static inline uint32_t ufs_rd(uint32_t off) { return *(volatile uint32_t *)(UFS_BASE + off); }
 static inline void ufs_wr(uint32_t off, uint32_t v) { *(volatile uint32_t *)(UFS_BASE + off) = v; }
@@ -49,16 +58,23 @@ struct utrd {
 
 /* UTP command descriptor: command UPIU, response UPIU, PRDT. */
 struct ucd {
-	uint8_t cmd[512];
-	uint8_t resp[512];
+	uint8_t cmd[UPIU_SIZE];
+	uint8_t resp[UPIU_SIZE];
 	struct {
 		uint32_t addr_lo, addr_hi, rsvd, dbc;	/* dbc = byte count - 1 */
-	} prdt[1];
+	} prdt[PRDT_MAX];
 };
 
+#if defined(SHIM_BLUEJAY)
+/* A safe conventional high-bank allocation, also used by the XNU port. */
+#define utrl ((struct utrd *)(uintptr_t)0x880100000UL)
+#define ucd (*(struct ucd *)(uintptr_t)0x880101000UL)
+#define data ((uint8_t *)(uintptr_t)0x880102000UL)
+#else
 static struct utrd utrl[32] __attribute__((aligned(1024)));
 static struct ucd ucd __attribute__((aligned(128)));
 static uint8_t data[2 * BLOCK] __attribute__((aligned(4096)));
+#endif
 
 static uint64_t ticks(void)
 {
@@ -74,6 +90,32 @@ static void zero(void *p, unsigned n)
 		b[i] = 0;
 }
 
+#if defined(SHIM_BLUEJAY)
+/* UIC operations alter only transient host/link state, never storage. */
+static uint32_t uic(uint32_t cmd, uint32_t arg1, uint32_t *value)
+{
+	uint64_t freq;
+	__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+	if (!(ufs_rd(REG_HCS) & HCS_UCRDY))
+		return 0xdead0001;
+	ufs_wr(REG_IS, 0xffffffffu);
+	ufs_wr(0x94, arg1);
+	ufs_wr(0x98, 0);
+	ufs_wr(0x9c, 0);
+	__asm__ volatile("dsb sy" ::: "memory");
+	ufs_wr(0x90, cmd);
+	uint64_t start = ticks();
+	while (!(ufs_rd(REG_IS) & 0x400)) {
+		if (ticks() - start > freq)
+			return 0xdead0002;
+	}
+	*value = ufs_rd(0x9c);
+	uint32_t rc = ufs_rd(0x98) & 0xff;
+	ufs_wr(REG_IS, ufs_rd(REG_IS));
+	return rc;
+}
+#endif
+
 static uint32_t be32(const uint8_t *p)
 {
 	return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
@@ -86,7 +128,24 @@ static uint32_t be32(const uint8_t *p)
 static uint32_t scsi(uint8_t lun, const uint8_t *cdb, unsigned cdb_len, void *buf, uint32_t len,
     uint32_t *ocs_out, uint32_t *status_out)
 {
-	static uint8_t tag;
+
+	/* Only START STOP UNIT(active) on the device WLUN may change runtime state. */
+	if (!cdb_len || (cdb[0] == 0x1b &&
+	    (lun != 0xd0 || cdb_len != 6 || cdb[1] || cdb[2] || cdb[3] || cdb[4] != 0x10 || cdb[5])) ||
+	    (cdb[0] != 0x1b && lun != 0 && !(cdb[0] == 3 && lun == 0xd0)))
+		return 5;
+	uintptr_t list = (uintptr_t)utrl;
+	if (cdb_len > 16 || len > PRDT_MAX * BLOCK ||
+	    (cdb[0] != 0 && cdb[0] != 3 && cdb[0] != 0x12 && cdb[0] != 0x1b && cdb[0] != 0x25 && cdb[0] != 0x28) ||
+	    ufs_rd(REG_UTRLBA) != (uint32_t)list ||
+	    ufs_rd(REG_UTRLBAU) != (uint32_t)(list >> 32) ||
+	    !(ufs_rd(REG_UTRLRSR) & 1) || ufs_rd(REG_UTRLDBR))
+		return 5;
+#if defined(SHIM_BLUEJAY)
+	for (uintptr_t a = (uintptr_t)utrl; a < (uintptr_t)utrl + 0x8000; a += 64)
+		__asm__ volatile("dc ivac, %0" : : "r"(a) : "memory");
+	__asm__ volatile("dsb sy" ::: "memory");
+#endif
 	zero(&utrl[0], sizeof(utrl[0]));
 	zero(&ucd, sizeof(ucd));
 
@@ -94,7 +153,7 @@ static uint32_t scsi(uint8_t lun, const uint8_t *cdb, unsigned cdb_len, void *bu
 	ucd.cmd[0] = 0x01;			/* transaction type: COMMAND */
 	ucd.cmd[1] = len ? 0x40 : 0x00;		/* flags: R (data in) */
 	ucd.cmd[2] = lun;
-	ucd.cmd[3] = ++tag;
+	ucd.cmd[3] = 0; /* Samsung task tag equals slot 0 */
 	ucd.cmd[12] = len >> 24;
 	ucd.cmd[13] = len >> 16;
 	ucd.cmd[14] = len >> 8;
@@ -107,27 +166,55 @@ static uint32_t scsi(uint8_t lun, const uint8_t *cdb, unsigned cdb_len, void *bu
 	utrl[0].dw2 = 0x0f;			/* OCS: invalid until the host updates it */
 	utrl[0].ucdba = (uint32_t)ucd_pa;
 	utrl[0].ucdbau = (uint32_t)(ucd_pa >> 32);
-	utrl[0].resp = (512u / 4) << 16 | (512u / 4);
+#if defined(SHIM_BLUEJAY)
+	/* GS101 uses byte units for response and PRDT fields. */
+	utrl[0].resp = UPIU_SIZE << 16 | UPIU_SIZE;
+#else
+	utrl[0].resp = (UPIU_SIZE / 4) << 16 | (UPIU_SIZE / 4);
+#endif
 	if (len) {
-		uintptr_t buf_pa = (uintptr_t)buf;
-		ucd.prdt[0].addr_lo = (uint32_t)buf_pa;
-		ucd.prdt[0].addr_hi = (uint32_t)(buf_pa >> 32);
-		ucd.prdt[0].dbc = len - 1;
-		utrl[0].prdt = (1024u / 4) << 16 | 1;
+		uint32_t n = 0;
+		for (uint32_t done = 0; done < len; done += BLOCK, n++) {
+			uintptr_t pa = (uintptr_t)buf + done;
+			uint32_t size = len - done < BLOCK ? len - done : BLOCK;
+			ucd.prdt[n].addr_lo = (uint32_t)pa;
+			ucd.prdt[n].addr_hi = (uint32_t)(pa >> 32);
+			ucd.prdt[n].dbc = size - 1;
+		}
+#if defined(SHIM_BLUEJAY)
+		utrl[0].prdt = PRDT_OFF << 16 | (n * 16);
+#else
+		utrl[0].prdt = (PRDT_OFF / 4) << 16 | n;
+#endif
 	}
+#if defined(SHIM_BLUEJAY)
+	ufs_wr(0x1140, ufs_rd(0x1140) | 1); /* slot 0 command nexus */
+	ufs_wr(REG_IS, 0xffffffffu);
+#endif
 	__asm__ volatile("dsb sy" ::: "memory");
 
 	ufs_wr(REG_UTRLDBR, 1);
 	uint64_t start = ticks();
 	while (ufs_rd(REG_UTRLDBR) & 1) {
-		if (ticks() - start > 19200000) {	/* 1 s */
-			ufs_wr(REG_UTRLCLR, ~1u);	/* clear slot 0 (write 0 to the bit) */
+		uint64_t freq;
+		__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+		if (ticks() - start > freq) {	/* 1 s */
+			con_hex2("UFS WAIT", "dbr=", ufs_rd(REG_UTRLDBR), "ocs=", utrl[0].dw2);
+			con_hex2("UFS ERR", "is=", ufs_rd(REG_IS), "resp=", ucd.resp[0]);
+			ufs_wr(REG_UTRLCLR, 1u);	/* Samsung clear slot 0 */
 			return 1;			/* timeout */
 		}
 	}
 	__asm__ volatile("dsb sy" ::: "memory");
 	*ocs_out = utrl[0].dw2 & 0xff;
 	*status_out = ucd.resp[7];		/* SCSI status in the response UPIU */
+	if (*ocs_out || *status_out) {
+		con_hex2("UFS RESP", "hdr=", be32(ucd.resp), "rsp=", be32(ucd.resp + 4));
+		con_hex2("UFS SENSE", "len/key=", (ucd.resp[32] << 24) | (ucd.resp[33] << 16) | ucd.resp[36],
+		    "asc/q=", (ucd.resp[46] << 8) | ucd.resp[47]);
+		con_hex2("UFS IS", "is=", ufs_rd(REG_IS), "vs=", ufs_rd(0x1138));
+		con_hex2("UFS LINK", "pa=", ufs_rd(0x38), "dl=", ufs_rd(0x3c));
+	}
 	if (*ocs_out)
 		return 2;
 	if (ucd.resp[0] != 0x21)		/* RESPONSE UPIU */
@@ -166,7 +253,11 @@ static const char *fs_type(uint32_t lba)
 /* One line per GPT entry of at least 64 MiB: name, first LBA, size in MiB (4K blocks). */
 static void list_partitions(uint32_t entry_lba, uint32_t nent)
 {
+	#if defined(SHIM_BLUEJAY)
+	uint8_t *ents = (uint8_t *)(uintptr_t)0x880104000UL;
+#else
 	static uint8_t ents[128 * 128] __attribute__((aligned(4096)));
+#endif
 	uint32_t blocks = (nent * 128 + BLOCK - 1) / BLOCK;
 	if (read_blocks(entry_lba, blocks, ents)) {
 		con_str("UFS PART", "read error");
@@ -211,6 +302,24 @@ void test_ufs(void)
 		return;
 	}
 
+#if defined(SHIM_BLUEJAY)
+	con_hex2("UFS CLK", "stop=", ufs_rd(0x11b0), "misc=", ufs_rd(0x11b4));
+	con_hex2("UFS DMA", "bufhi=", (uint32_t)((uintptr_t)utrl >> 32), "buflo=", (uint32_t)(uintptr_t)utrl);
+	/* exynos_ufs_ungate_clks and disable_auto_ctrl_hcc from Linux. */
+	ufs_wr(0x11b0, ufs_rd(0x11b0) & ~0x1fu);
+	ufs_wr(0x11b4, ufs_rd(0x11b4) & ~0xf0u);
+	ufs_wr(0x24, 0); /* no asynchronous interrupt handler owns the UFS */
+	zero(utrl, 32 * sizeof(struct utrd));
+	/* HCS ready does not tell us whether ABL parked the link in Hibern8. */
+	con_hex2("UFS H8", "ahit=", ufs_rd(0x18), "vs=", ufs_rd(0x1138));
+	ufs_wr(0x18, 0); /* stop automatic reentry while we own the controller */
+	uint32_t value = 0, uic_rc = uic(1, 0x1571u << 16, &value);
+	con_hex2("UFS PWR", "rc=", uic_rc, "mode=", value);
+	uic_rc = uic(1, 0x4020u << 16, &value);
+	con_hex2("UFS PORT", "rc=", uic_rc, "state=", value);
+	uic_rc = uic(0x18, 0, &value);
+	con_hex2("UFS EXIT", "rc=", uic_rc, "hcs=", ufs_rd(REG_HCS));
+#endif
 	/* Take over the transfer request list: stop, point at ours, run. */
 	ufs_wr(REG_UTRLRSR, 0);
 	uintptr_t list = (uintptr_t)utrl;
@@ -228,7 +337,23 @@ void test_ufs(void)
 		return;
 	}
 
+#if defined(SHIM_BLUEJAY)
+	/* Same Samsung vendor setup as the supplied working BluejayUfs.c. */
+	ufs_wr(0x1100, 12);
+	ufs_wr(0x1104, 12);
+	ufs_wr(0x1160, 0x0a);
+	ufs_wr(0x116c, (1u << 31) | (3u << 27) | 3);
+#endif
 	uint32_t ocs = 0, st = 0, rc;
+#if defined(SHIM_BLUEJAY)
+	/* ABL leaves the device in a stopped state: sense 02/04/02. */
+	static const uint8_t rsdev[6] = { 3, 0, 0, 0, 96, 0 };
+	rc = scsi(0xd0, rsdev, sizeof(rsdev), data, 96, &ocs, &st);
+	con_hex2("UFS D SENSE", "rc=", rc, "asc/q=", data[12] << 8 | data[13]);
+	static const uint8_t active[6] = { 0x1b, 0, 0, 0, 0x10, 0 };
+	rc = scsi(0xd0, active, sizeof(active), 0, 0, &ocs, &st);
+	con_hex2("UFS ACTIVE", "rc=", rc, "ocs/st=", ocs << 8 | st);
+#endif
 	static const uint8_t tur[6] = { 0x00 };
 	/* A first command may report a unit attention; retry a few times. */
 	for (int i = 0; i < 3; i++) {
@@ -237,6 +362,11 @@ void test_ufs(void)
 		if (!rc)
 			break;
 	}
+
+	static const uint8_t sense[6] = { 3, 0, 0, 0, 96, 0 };
+	rc = scsi(0, sense, sizeof(sense), data, 96, &ocs, &st);
+	con_hex2("UFS RSENSE", "rc=", rc, "ocs/st=", ocs << 8 | st);
+	con_hex2("SCSI SENSE", "key=", data[2], "asc/q=", data[12] << 8 | data[13]);
 
 	static const uint8_t cap10[10] = { 0x25 };	/* READ CAPACITY(10) */
 	rc = scsi(0, cap10, sizeof(cap10), data, 8, &ocs, &st);
