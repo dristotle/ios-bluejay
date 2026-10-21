@@ -9,8 +9,18 @@ No XNU or iOS boot on bluejay achieved yet.
   Commits db3fc17 and 04c1f90 pushed to fork/bluejay-port.
   User says never merge into the original dipa-studio repository.
   Fork Actions permissions enabled, but workflows/runs both zero and dispatch
-  and workflow enable return HTTP404. Add a bluejay-port push trigger and
-  BLUEJAY default to register/build the workflow in the fork only.
+  and workflow enable initially returned HTTP404. Fork default branch now
+  bluejay-port; push trigger/BLUEJAY default registered workflow392043311.
+  CI39653816126 started but skipped0082: missing new-file-mode headers made
+  git apply report dev/null missing, then BLUEJAY config was unsupported.
+  Added new-file headers in9c036e2; isolated git apply --check/apply17 MATCH.
+  CI39655299762 applied0082 and reached compilation. BearSSL inner.h,
+  pthread TargetConditionals and HFS compatibility flags missing because
+  bsd/libkern Makefile.template still matched only SWEET. Patch0083
+  extends both conditions to BLUEJAY; isolated git apply2 MATCH.
+  All58 affected crypto/pthread/HFS C units pass clang21 checks with
+  restored flags using CI39655299762 headers and commands.
+  Generated headers/tree: research/ci0082-2-artifacts/buildtree.tgz.
 - User explicitly allows wiping userdata. Never modify win, esp, GPT,
   boot/recovery, calibration or modem partitions. Use temporary fastboot boot.
 - Verified userdata sda27: start 18321200, size 118397552 in 512-byte units;
@@ -54,7 +64,7 @@ No XNU or iOS boot on bluejay achieved yet.
   OS DMG kept as stored ZIP member: offset1191497303, length4730814044;
   use a bounded read-only view to avoid duplicating it. APFS-fuse and lzfse
   built in research/apfs/build. WSL lacks HFS+; Linux7.0.0-38 guest kernel
-  and modules extracted in research/hfs-guest. Initramfs/guest pending.
+  and modules extracted in research/hfs-guest. Guest boots and copy running.
   Host C free ~13GB; monitor physical space before root creation.
 
 - Patch0082 adds BLUEJAY machine config (plain ARM64), high-bank bootstrap
@@ -66,6 +76,9 @@ No XNU or iOS boot on bluejay achieved yet.
 - mkbluejayadt.py uses verified memory/GIC/UFS/timer facts, iPhone X
   identity, real A55/A78/X1 CPU types, and synthetic chip identity.
   Guest Linux7.0 kernel/modules with HFS+ downloaded and extracted.
+  Initramfs19.7MB boots under KVM; all APFS sources mounted read-only,
+  including bounded OS ZIP member via ipsw-slice. Copy running into sparse
+  research/ios16-bluejay-v1.img (16GiB logical); no device writes.
 
 Next: activate/observe BLUEJAY macOS CI in fork; prepare/tweak/verify
 HFS+ root; install only in userdata; temporary boot real XNU.
