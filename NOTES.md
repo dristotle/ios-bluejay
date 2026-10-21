@@ -5,8 +5,12 @@ real iPhone X iOS 16.7.16 (20H392) userland and XNU on Pixel 6a bluejay.
 No XNU or iOS boot on bluejay achieved yet.
 
 - Checkout `/home/catto/ios-bluejay`, branch `bluejay-port`, upstream 425b251.
-  Build fork `dristotle/ios-sweet`, authenticated as dristotle. No port CI yet.
-  Shim milestone committed db3fc17. BLUEJAY XNU patch0082 ready for CI.
+  Build fork `dristotle/ios-sweet`, authenticated as dristotle.
+  Commits db3fc17 and 04c1f90 pushed to fork/bluejay-port.
+  User says never merge into the original dipa-studio repository.
+  Fork Actions permissions enabled, but workflows/runs both zero and dispatch
+  and workflow enable return HTTP404. Add a bluejay-port push trigger and
+  BLUEJAY default to register/build the workflow in the fork only.
 - User explicitly allows wiping userdata. Never modify win, esp, GPT,
   boot/recovery, calibration or modem partitions. Use temporary fastboot boot.
 - Verified userdata sda27: start 18321200, size 118397552 in 512-byte units;
@@ -45,10 +49,13 @@ No XNU or iOS boot on bluejay achieved yet.
   generated headers and complete research/upstream-build/run.log.
 - IPSW `C:/Users/Catto/Downloads/iOS/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw`.
   OS087-86698-044.dmg4.73GB; SystemOS087-86593-047.dmg2.74GB;
-  AppOS087-86715-047.dmg10MB, DeviceTree.d22ap.im4p. No large extraction yet.
-  Built APFS-fuse research/apfs/build/apfs-fuse. WSL has no HFS+ driver;
-  prepare small Linux guest or equivalent bounded HFS+ staging method.
-  Host C free ~15GB; WSL virtual free space is misleading.
+  AppOS087-86715-047.dmg10MB, DeviceTree.d22ap.im4p.
+  SystemOS, AppOS, and decoded d22ap.adt extracted in research/ipsw-x.
+  OS DMG kept as stored ZIP member: offset1191497303, length4730814044;
+  use a bounded read-only view to avoid duplicating it. APFS-fuse and lzfse
+  built in research/apfs/build. WSL lacks HFS+; Linux7.0.0-38 guest kernel
+  and modules extracted in research/hfs-guest. Initramfs/guest pending.
+  Host C free ~13GB; monitor physical space before root creation.
 
 - Patch0082 adds BLUEJAY machine config (plain ARM64), high-bank bootstrap
   framebuffer block/offset, GIC masking, byte-unit UFS descriptors, 4K PRDT,
@@ -60,8 +67,8 @@ No XNU or iOS boot on bluejay achieved yet.
   identity, real A55/A78/X1 CPU types, and synthetic chip identity.
   Guest Linux7.0 kernel/modules with HFS+ downloaded and extracted.
 
-Next: commit/push BLUEJAY0082 and dispatch macOS CI;
-prepare/tweak HFS+ root; install only in userdata; temporary boot real XNU.
+Next: activate/observe BLUEJAY macOS CI in fork; prepare/tweak/verify
+HFS+ root; install only in userdata; temporary boot real XNU.
 
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
