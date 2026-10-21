@@ -37,7 +37,10 @@ def build(seed=None):
     cpus = next(n for n in tree.children if n.name == 'cpus')
     for core, cpu in enumerate(cpus.children):
         kind = 'cortex-a55' if core < 4 else 'cortex-a78' if core < 6 else 'cortex-x1'
-        setprop(cpu, 'compatible', ('arm,' + kind).encode() + b'\0ARM,v8\0')
+        # SweetCPU is the inherited PSCI/GIC driver. Its IOKit personality
+        # still matches this alias; retain the real Cortex identities first.
+        setprop(cpu, 'compatible', ('arm,' + kind).encode()
+                + b'\0ARM,v8\0qcom,kryo470\0')
         setprop(cpu, 'clock-frequency', mkadt.u32(1803000000 if core < 4 else 2253000000 if core < 6 else 2802000000))
     ufs = next(n for n in tree.children if n.name == 'sweet-ufs')
     setprop(ufs, 'compatible', b'samsung,exynos-ufs\0')

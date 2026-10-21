@@ -2,7 +2,8 @@
 
 This section supersedes upstream sweet observations below. Objective: boot
 real iPhone X iOS 16.7.16 (20H392) userland and XNU on Pixel 6a bluejay.
-No XNU or iOS boot on bluejay achieved yet.
+Real BLUEJAY XNU now reaches its framebuffer console and VM/IOKit
+initialization. No iOS userland boot on bluejay achieved yet.
 
 - Checkout `/home/catto/ios-bluejay`, branch `bluejay-port`, upstream 425b251.
   Build fork `dristotle/ios-sweet`, authenticated as dristotle.
@@ -21,6 +22,37 @@ No XNU or iOS boot on bluejay achieved yet.
   All58 affected crypto/pthread/HFS C units pass clang21 checks with
   restored flags using CI39655299762 headers and commands.
   Generated headers/tree: research/ci0082-2-artifacts/buildtree.tgz.
+- **First real BLUEJAY XNU boot, 2026-10-21 21:17 local:** successful fork
+  CI39658505476, committed/pushed HEAD bb7accf. Kernel
+  xnu/out-bluejay-0083/kernel.development.bluejay (plain arm64 Mach-O PIE),
+  SHA256 1e68a2ce33d90a88a159c6a2f33d7b61427f8ce8b80c2f8b29547104257b07a8.
+  Header-v4/LZ4 image C:/Users/Catto/ios-bluejay-artifacts/bluejay-xnu-0083-ro.img,
+  SHA256 1c6ad02246fe6b686b6c8eb848f8b34e8f6181fb102ea2565676cc3bc265a667.
+  fastboot boot accepted (0.221s). Args debug=0xc serial=3 cpus=1 keepsyms=1
+  -enable_kprintf_spam -noprogress rd=ufsroot0 ufsrw=0 sweetlog=0.
+  User photo C:/Users/Catto/Downloads/AyuGram Desktop/photo_2026-10-21_21-17-23.jpg
+  confirms XNU console, framebuffer, battery/IOSurface stand-ins, VM bootstrap,
+  IOKit ownership and ITH subsystem initialization. No panic visible, no CPU
+  registration/UFS lines. Phone returned to adb recovery by the next check.
+  Likely blocker (not hardware-verified yet): CPU IONameMatch qcom,kryo470
+  absent from bluejay Cortex compatible lists. Adding alias to the ADT allows
+  a payload-only retry with the already-built 0083 kernel.
+  No device storage writes or partition flashes.
+- **XNU UFS root-device milestone, 2026-10-21 21:26 local:** ADT now retains
+  real Cortex CPU names plus the inherited qcom,kryo470 matching alias.
+  Same 0083 kernel; header-v4/LZ4 image bluejay-xnu-0083-cpu-ro.img,
+  SHA256 a9df4d50ce198fdaded6cb4367b155d463ccb38e7bbb1d503be5da37bc4b7e19.
+  fastboot boot send/boot OKAY (0.193s). User photo
+  C:/Users/Catto/Downloads/AyuGram Desktop/photo_2026-10-21_21-26-01.jpg
+  confirms BSD startup, Skywalk self-tests, BLUEJAY UFS link resume rc0
+  power0x11 cport1, device active rc0, userdata first0x22f1e6 size57811MiB,
+  read-only DMA0x8841d8000. BSD root ufsroot0 major1/minor0 reached;
+  HFS rejects current ext4 (unknown signature80, errno19). This is expected
+  until iOS HFS+ root is installed. No device storage writes or flashes.
+  HFS copy still active in QEMU PID1220/session93264; ~95k files/~702MB
+  copied, image allocated1.2GiB, C free16GiB. Initial builder is already
+  loaded: final manifest path and ByHost migration updates need a later
+  mount-only finalize pass, never reformat/restart the running copy.
 - User explicitly allows wiping userdata. Never modify win, esp, GPT,
   boot/recovery, calibration or modem partitions. Use temporary fastboot boot.
 - Verified userdata sda27: start 18321200, size 118397552 in 512-byte units;
@@ -65,7 +97,7 @@ No XNU or iOS boot on bluejay achieved yet.
   use a bounded read-only view to avoid duplicating it. APFS-fuse and lzfse
   built in research/apfs/build. WSL lacks HFS+; Linux7.0.0-38 guest kernel
   and modules extracted in research/hfs-guest. Guest boots and copy running.
-  Host C free ~13GB; monitor physical space before root creation.
+  Host C free ~20GB; monitor physical space before root creation.
 
 - Patch0082 adds BLUEJAY machine config (plain ARM64), high-bank bootstrap
   framebuffer block/offset, GIC masking, byte-unit UFS descriptors, 4K PRDT,
@@ -80,8 +112,9 @@ No XNU or iOS boot on bluejay achieved yet.
   including bounded OS ZIP member via ipsw-slice. Copy running into sparse
   research/ios16-bluejay-v1.img (16GiB logical); no device writes.
 
-Next: activate/observe BLUEJAY macOS CI in fork; prepare/tweak/verify
-HFS+ root; install only in userdata; temporary boot real XNU.
+Next: finish HFS+ copy; repair/finalize without formatting the image
+(running builder predates SpringBoard path and ByHost fixes). Verify root,
+install only in userdata, then boot real iOS userland.
 
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
