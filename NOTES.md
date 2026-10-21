@@ -63,17 +63,36 @@ initialization. No iOS userland boot on bluejay achieved yet.
   SWEET userspace init running as PID1 / still alive. No panic visible.
   This is the small static bring-up program, not Apple launchd/iOS userland.
   Phone subsequently returned to recovery (adb). No storage writes.
-- HFS copy was interrupted at ~3.46GB by host SIGHUP, source mounts lost.
-  Existing16GiB image was preserved, repaired successfully, then resumed.
-  9p file-by-file copying was slow; rsync over SLIRP stalled on bulk TCP.
-  Current working method: GNU tar over named virtio-serial device vport1p1.
-  Guest uses Linux7.0.0-38 KVM, HFS repair/mount only (no reformat).
-  Logs research/hfs-guest/serial-v1.log and serial-copy-v1.log;
-  exec session4434, QEMU PID1457. Main OS copy complete8.83GB tar stream;
-  SystemOS copying ~25MiB/s, AppOS then root finalization/fsck pending.
-  Source APFS mounts are read-only (owned by root). Host C free~16GiB.
-  Windows helpers run-hfs-serial.py and hfs-serial-copy.py reproduce the
-  direct channel; initial initramfs helper create-hfs-guest.py still available.
+- **Full iOS root complete and HFS verified, 2026-10-21:**
+  research/ios16-bluejay-v1.img is16GiB logical/11.7GiB filesystem used;
+  complete OS/SystemOS/AppOS copied by GNU tar over virtio-serial with
+  uid/gid/modes/symlinks/hardlinks preserved. Cryptex files/shared caches
+  exposed, sweet-root-tweaks applied, bluejay ByHost migration seeded.
+  QEMU stopped; never recopy/reformat the completed image.
+  Source/logs research/hfs-guest/serial-v1.log and serial-copy-v1.log.
+  Critical manifest validates launchd/dyld/launchd.plist/SpringBoard/
+  backboardd/SystemVersion20H392. mobileactivationd container absent:
+  data-ark seeding skipped, possible later userland issue.
+  Ubuntu packaged fsck540.1 still emits invalid primary VHB result35.
+  This is a cache-buffer conflict (EDEADLK), not badMDBErr(-60); on-disk
+  primary/alternate512-byte HFSX headers match. Rebuilt original Apple
+  checker + exact Ubuntu packaging patches passes full no-write check
+  with exit0 after correcting root folder HasFolderCount/count13.
+  Catalog/extents/hardlinks/hierarchy/xattrs/allocation/volume all pass.
+  Sources research/hfs-checker/distro/diskdev_cmds-540.1.linux3;
+  source archive sha256b01b203a97f9a3bf36a027c13ddfc59292730552e62722d690d33bd5c24f5497;
+  packaging sha256e5edfafed563ad337e2ca16d8439f0424ecf0e0ac558c2c5896569cf7389f914.
+  Independent clang unoptimized and GCC15 optimized builds agree;
+  precise reason packaged binary diverges not yet isolated.
+  Verified full-image SHA256 f34aaadd00d92a2a3a3d3bb4d403671c895b8b648e4dc30c5581b85ffc1096fb;
+  external manifest research/ios16-bluejay-v1.manifest.json, copies in
+  Windows ios-bluejay-artifacts including ios16-bluejay-v1-fsck.txt.
+  No phone writes yet. Recovery /data unmounted, fixed-target writer
+  --check-device PASS sda27 bytes60619546624/start18321200/image16GiB.
+  Temporary header-v4/LZ4 image bluejay-xnu-0083-ios-v1.img prepared:
+  SHA25620b07dd145f964cf6e81f89188f94e922cd030fa07a031eead927f46a1d8746e;
+  kernel0083, CPU alias ADT, cpus4/rd=ufsroot0/ufsrw1/rootrw1, upstream
+  ignition/launchd arguments, ufslogsecs2. Not booted yet.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
@@ -145,9 +164,10 @@ initialization. No iOS userland boot on bluejay achieved yet.
   including bounded OS ZIP member via ipsw-slice. Copy running into sparse
   research/ios16-bluejay-v1.img (16GiB logical); no device writes.
 
-Next: finish direct serial HFS copy/finalization/fsck, hash immutable image,
-unmount recovery /data then bounded install only in userdata. Verify readback
-and protected baseline; temporary kernel0083 boot with cpus=4/rootrw/UFS logs.
+Next: immutable root is verified+hashed and recovery /data unmounted.
+Bounded install only to userdata, verify full16GiB readback SHA256 and
+protected baseline, then temporary boot bluejay-xnu-0083-ios-v1.img.
+Inspect persistent logs/photos; continue to real iOS launchd and SpringBoard.
 
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
