@@ -29,6 +29,7 @@ diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
  endif
  endif
 diff --git a/config/MASTER.arm64.bluejay b/config/MASTER.arm64.bluejay
+new file mode 100644
 --- /dev/null
 +++ b/config/MASTER.arm64.bluejay
 @@ -0,0 +1,115 @@
@@ -148,6 +149,7 @@ diff --git a/config/MASTER.arm64.bluejay b/config/MASTER.arm64.bluejay
 +options   CONFIG_RESLIDE_SHARED_CACHE		# <reslide_shared_cache>
 +options   CONFIG_KERNEL_TBI		# <kernel_tbi>
 diff --git a/pexpert/pexpert/arm64/BLUEJAY.h b/pexpert/pexpert/arm64/BLUEJAY.h
+new file mode 100644
 --- /dev/null
 +++ b/pexpert/pexpert/arm64/BLUEJAY.h
 @@ -0,0 +1,8 @@
