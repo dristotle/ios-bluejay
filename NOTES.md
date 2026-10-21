@@ -53,6 +53,39 @@ initialization. No iOS userland boot on bluejay achieved yet.
   copied, image allocated1.2GiB, C free16GiB. Initial builder is already
   loaded: final manifest path and ByHost migration updates need a later
   mount-only finalize pass, never reformat/restart the running copy.
+- **4 A55 cores + static userspace verified, 2026-10-21 21:33 local:**
+  kernel0083 + CPU alias ADT + research/bluejay-init as RAMDisk at0x8824c0000.
+  Header-v4/LZ4 image bluejay-xnu-0083-init4.img, SHA256
+  3497e8da51ce956f7c4c24937c3e101cbff581609473326e3a0c8628424bab6c.
+  fastboot boot accepted0.193s. Args cpus=4 rd=md0 ufsrw=0 sweetlog=0.
+  User photo C:/Users/Catto/Downloads/AyuGram Desktop/photo_2026-10-21_21-33-45.jpg
+  shows 4/4 CPUs initialized/SGI1 verified, BSD md0 root and
+  SWEET userspace init running as PID1 / still alive. No panic visible.
+  This is the small static bring-up program, not Apple launchd/iOS userland.
+  Phone subsequently returned to recovery (adb). No storage writes.
+- HFS copy was interrupted at ~3.46GB by host SIGHUP, source mounts lost.
+  Existing16GiB image was preserved, repaired successfully, then resumed.
+  9p file-by-file copying was slow; rsync over SLIRP stalled on bulk TCP.
+  Current working method: GNU tar over named virtio-serial device vport1p1.
+  Guest uses Linux7.0.0-38 KVM, HFS repair/mount only (no reformat).
+  Logs research/hfs-guest/serial-v1.log and serial-copy-v1.log;
+  exec session4434, QEMU PID1457. Main OS copy complete8.83GB tar stream;
+  SystemOS copying ~25MiB/s, AppOS then root finalization/fsck pending.
+  Source APFS mounts are read-only (owned by root). Host C free~16GiB.
+  Windows helpers run-hfs-serial.py and hfs-serial-copy.py reproduce the
+  direct channel; initial initramfs helper create-hfs-guest.py still available.
+- tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
+  userdata resolves to sda27; checks sysfs dynamic device number, first/size,
+  protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
+  write bounded to16GiB and existing userdata. Accepts only RAW/zero FILL;
+  malformed/truncated/oversize/DONT_CARE/trailing/wrong-FS tests passed on
+  host; ARM64 --validate passed in recovery without writes. --check-device
+  correctly refuses currently mounted /data. Stream encoder hashes manifest
+  before sending and covers every image block (no stale ext4 holes).
+  Protected baseline C:/Users/Catto/ios-bluejay-artifacts/protected-pre-root.json:
+  exact6-block GPT matches old backup (old34-block dump also includes persist),
+  backup GPT, esp full hash, win/esp first/last4MiB samples and layout saved.
+  No protected writes; no userdata installation yet.
 - User explicitly allows wiping userdata. Never modify win, esp, GPT,
   boot/recovery, calibration or modem partitions. Use temporary fastboot boot.
 - Verified userdata sda27: start 18321200, size 118397552 in 512-byte units;
@@ -112,9 +145,9 @@ initialization. No iOS userland boot on bluejay achieved yet.
   including bounded OS ZIP member via ipsw-slice. Copy running into sparse
   research/ios16-bluejay-v1.img (16GiB logical); no device writes.
 
-Next: finish HFS+ copy; repair/finalize without formatting the image
-(running builder predates SpringBoard path and ByHost fixes). Verify root,
-install only in userdata, then boot real iOS userland.
+Next: finish direct serial HFS copy/finalization/fsck, hash immutable image,
+unmount recovery /data then bounded install only in userdata. Verify readback
+and protected baseline; temporary kernel0083 boot with cpus=4/rootrw/UFS logs.
 
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
