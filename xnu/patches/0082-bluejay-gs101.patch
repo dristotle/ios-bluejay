@@ -1,0 +1,713 @@
+diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
+--- a/makedefs/MakeInc.def
++++ b/makedefs/MakeInc.def
+@@ -29,7 +29,7 @@
+ else ifneq ($(findstring _host,$(RC_ProjectName)),)
+ SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
+ else
+-SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE SWEET
++SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE SWEET BLUEJAY
+ 
+ endif
+ 
+@@ -62,6 +62,8 @@
+ MACHINE_FLAGS_ARM64_VMAPPLE = -DARM64_BOARD_CONFIG_VMAPPLE              -march=armv8.5a
+ MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
+ MACHINE_FLAGS_ARM64_SWEET = -DARM64_BOARD_CONFIG_SWEET                -march=armv8.2-a+crypto
++# Reuse the generic SWEET userland, framebuffer and GIC support.
++MACHINE_FLAGS_ARM64_BLUEJAY = -DARM64_BOARD_CONFIG_BLUEJAY -DARM64_BOARD_CONFIG_SWEET -DBLUEJAY=1 -march=armv8.2-a+crypto
+ 
+ 
+ #
+@@ -261,7 +263,7 @@
+ export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := $(shell echo $(CURRENT_ARCH_CONFIG) | tr A-Z a-z)
+ ifneq ($(filter arm64,$(ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG)),)
+ # sweet's Cortex-A76/A55 have no pointer authentication: stay plain arm64
+-ifneq ($(CURRENT_MACHINE_CONFIG),SWEET)
++ifeq ($(filter SWEET BLUEJAY,$(CURRENT_MACHINE_CONFIG)),)
+ export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := arm64e
+ endif
+ endif
+diff --git a/config/MASTER.arm64.bluejay b/config/MASTER.arm64.bluejay
+--- /dev/null
++++ b/config/MASTER.arm64.bluejay
+@@ -0,0 +1,115 @@
++#
++# bluejay (Pixel 6a, GS101): reuse SWEET userland support and the open-source
++# arm64 assembly and pmap (nos_arm_asm, nos_arm_pmap). Apple's own SoC configs
++# link those from the KDK's closed lib<SOC>.os.<CONFIG>.a instead, which is
++# arm64e and Apple-silicon specific. kperf/kpc stay (xnu does not build without
++# kperf); osfmk/arm64/kpc.c is a stub with no hardware counters.
++#
++#
++# Mach Operating System
++# Copyright (c) 1986 Carnegie-Mellon University
++# Copyright 2001-2018 Apple Inc.
++#
++# All rights reserved.  The CMU software License Agreement
++# specifies the terms and conditions for use and redistribution.
++#  
++######################################################################
++#
++#  Master Apple configuration file (see the master machine independent
++#  configuration file for a description of the file format).
++#
++######################################################################
++#  
++#  Standard Apple OS Configurations:
++#  -------- ----- -- ---------------
++#
++#  KERNEL_BASE =    [ arm64 config_pmap_ppl medium msgb_large config_requires_u32_munging config_delay_idle_sleep config_proc_udata_storage config_uexc config_darkboot nos_arm_asm nos_arm_pmap ]
++#  KERNEL_RELEASE = [ KERNEL_BASE ]
++#  KERNEL_DEV =     [ KERNEL_BASE development mach_assert config_xnupost proc_ref_debug config_proc_resource_limits ]
++#  KERNEL_DEBUG =   [ KERNEL_BASE debug mach_assert config_xnupost config_waitq_stats config_workloop_debug config_proc_resource_limits ]
++#  BSD_BASE =       [ mach_bsd sysv_sem sysv_msg sysv_shm config_netboot config_imageboot psynch config_proc_uuid_policy config_coredump pgo config_personas ]
++#  BSD_RELEASE =    [ BSD_BASE ]
++#  BSD_DEV =        [ BSD_BASE config_vnguard ]
++#  BSD_DEBUG =      [ BSD_BASE config_vnguard ]
++#  FILESYS_BASE =   [ devfs fdesc fifo mockfs sweet_hfs fs_compression config_protect config_mnt_rootsnap config_rosv_startup config_mount_vm config_mount_prebootrecovery config_basesystemroot config_fse quota namedstreams config_imgsrc_access config_triggers config_searchfs config_volfs config_appledouble nullfs bindfs config_mnt_suid config_firmlinks config_dataless_files config_union_mounts config_file_leases ]
++#  FILESYS_RELEASE= [ FILESYS_BASE ]
++#  FILESYS_DEV =    [ FILESYS_BASE config_iocount_trace ]
++#  FILESYS_DEBUG =  [ FILESYS_BASE config_iocount_trace ]
++#  NFS =            [ nfsserver ]
++#  SKYWALK_BASE =   [ skywalk config_nexus_user_pipe config_nexus_kernel_pipe config_nexus_monitor config_nexus_flowswitch config_nexus_netif ]
++#  SKYWALK_RELEASE = [ SKYWALK_BASE ]
++#  SKYWALK_DEV =    [ SKYWALK_BASE ]
++#  SKYWALK_DEBUG =  [ SKYWALK_BASE ]
++#  NETWORKING =     [ inet bpfilter dummynet traffic_mgt sendfile ah_all_crypto bond vlan gif stf ifnet_input_chk config_mbuf_jumbo if_bridge MULTIPATH if_fake remote_vif ]
++#  NETWORKING_RELEASE = [ NETWORKING ]
++#  NETWORKING_DEV = [ NETWORKING_RELEASE packet_mangler if_headless ]
++#  NETWORKING_DEBUG = [ NETWORKING_DEV ]
++#  VPN =            [ ipsec flow_divert necp content_filter ]
++#  PF =             [ pf pflog ]
++#  MULTIPATH =      [ multipath mptcp ]
++#if SOC_CONFIG_t8020 || SOC_IS_VIRTUALIZED
++#  HIBERNATION =    [ ]
++#else /*!(SOC_CONFIG_t8020 || SOC_IS_VIRTUALIZED)*/
++#  HIBERNATION =    [ ]
++#endif /*SOC_CONFIG_t8020 || SOC_IS_VIRTUALIZED*/
++#  IOKIT_BASE =     [ iokit iokitcpp no_kernel_hid config_sleep iokitstats HIBERNATION ]
++#  IOKIT_RELEASE =  [ IOKIT_BASE ]
++#  IOKIT_DEV =      [ IOKIT_BASE iotracking ]
++#  IOKIT_DEBUG =    [ IOKIT_BASE iotracking ]
++#  LIBKERN_BASE =   [ libkerncpp config_blocks config_kec_fips crypto_sha2 config_img4 ]
++#  LIBKERN_RELEASE =[ LIBKERN_BASE zlib ]
++#  LIBKERN_DEV =    [ LIBKERN_BASE zlib iotracking ]
++#  LIBKERN_DEBUG =  [ LIBKERN_BASE zlib iotracking ]
++#  PERF_DBG_BASE =  [ config_dtrace mach_kdp config_serial_kdp kdp_interactive_debugging config_kdp_coredump_encryption config_pervasive_energy PERFMON_BASE kperf kpc ]
++#  PERF_DBG_RELEASE=[ PERF_DBG_BASE ist_kdebug ]
++#  PERF_DBG_DEV =   [ PERF_DBG_BASE lock_stats zleaks alternate_debugger sched_hygiene_debug config_debug_syscall_rejection config_iotrace ]
++#  PERF_DBG_DEBUG = [ PERF_DBG_BASE lock_stats zleaks alternate_debugger sched_hygiene_debug config_debug_syscall_rejection config_iotrace ]
++#if SOC_IS_VIRTUALIZED
++#  PARAVIRT_BASE =  [ config_pv_ticket ]
++#else
++#  PARAVIRT_BASE =  [ ]
++#endif /*SOC_IS_VIRTUALIZED*/
++#  MACH_BASE =      [ mach config_ecc_logging vc_progress_white importance_inheritance config_atm config_coalitions config_iosched config_sysdiagnose config_telemetry config_mach_bridge_recv_time config_quiesce_counter config_arm_pfz config_user_notification phys_write_acct config_service_port_info config_voucher_deprecated PARAVIRT_BASE config_ledger_interval_max ]
++#  MACH_RELEASE =   [ MACH_BASE ]
++#  MACH_DEV =       [ MACH_BASE config_io_accounting importance_trace ]
++#  MACH_DEBUG =     [ MACH_BASE config_io_accounting importance_trace importance_debug ]
++#  SCHED_BASE =     [ config_sched_traditional config_sched_multiq config_sched_deferred_ast config_clutch config_sched_sfi config_sched_auto_join config_preadopt_tg ]
++#  SCHED_RELEASE =  [ SCHED_BASE ]
++#  SCHED_DEV =      [ SCHED_BASE ]
++#  SCHED_DEBUG =    [ SCHED_BASE config_sched_grrr config_sched_proto ]
++#  VM_BASE =        [ vm_pressure_events memorystatus config_code_decryption encrypted_swap config_deferred_reclaim ]
++#  VM_RELEASE =     [ VM_BASE ]
++#  VM_DEV =         [ VM_BASE dynamic_codesigning pgzalloc ]
++#  VM_DEBUG =       [ VM_BASE dynamic_codesigning pgzalloc ]
++#  VM_KASAN =       [ VM_BASE dynamic_codesigning config_kasan config_ubsan config_kcov config_ksancov kernel_tbi ]
++#  SECURITY =       [ config_macf config_audit kernel_integrity config_csr config_csr_from_dt config_setuid config_kas_info config_secure_bsd_root config_arcade config_supplemental_signatures second_static_trust_cache reslide_shared_cache ]
++#  BASE =           [ PF VPN SECURITY NFS ]
++#  RELEASE =        [ BASE KERNEL_RELEASE BSD_RELEASE FILESYS_RELEASE SKYWALK_RELEASE NETWORKING_RELEASE IOKIT_RELEASE LIBKERN_RELEASE    PERF_DBG_RELEASE MACH_RELEASE SCHED_RELEASE VM_RELEASE ]
++#  DEVELOPMENT =    [ BASE KERNEL_DEV     BSD_DEV     FILESYS_DEV     SKYWALK_DEV     NETWORKING_DEV     IOKIT_DEV     LIBKERN_DEV        PERF_DBG_DEV     MACH_DEV     SCHED_DEV     VM_DEV     ]
++#  DEBUG =          [ BASE KERNEL_DEBUG   BSD_DEBUG   FILESYS_DEBUG   SKYWALK_DEBUG   NETWORKING_DEBUG   IOKIT_DEBUG   LIBKERN_DEBUG      PERF_DBG_DEBUG   MACH_DEBUG   SCHED_DEBUG   VM_DEBUG   ]
++#  KASAN =          [ BASE KERNEL_DEV     BSD_DEV     FILESYS_DEV     SKYWALK_DEV     NETWORKING_DEV     IOKIT_DEV     LIBKERN_DEV        PERF_DBG_DEV     MACH_DEV     SCHED_DEV     VM_KASAN   ]
++#
++######################################################################
++#
++machine		"arm64"						# <arm64>
++
++makeoptions	OSFMK_MACHINE = "arm64"				# <mach>
++
++options		COUNT_SYSCALLS		# count bsd system calls 	# <countcalls>
++options     TRASH_VFP_ON_SAVE   # <debug,trash_vfp>
++options		ALTERNATE_DEBUGGER	# <alternate_debugger>
++
++options   CONFIG_VNODES=1024		# <xsmall>
++
++options   CONFIG_FREEZE_SUSPENDED_MIN=4		# <xsmall>
++
++options	  CONFIG_MACH_APPROXIMATE_TIME
++
++options   CONFIG_KERNEL_INTEGRITY		# <kernel_integrity>
++
++options CONFIG_MACF_LAZY_VNODE_LABELS   # Turn on labels, don't preallocate
++
++options CONFIG_HYPERVISOR_PUBLIC   # unrestricted entitlement for hypervisor
++
++options   CONFIG_RESLIDE_SHARED_CACHE		# <reslide_shared_cache>
++options   CONFIG_KERNEL_TBI		# <kernel_tbi>
+diff --git a/pexpert/pexpert/arm64/BLUEJAY.h b/pexpert/pexpert/arm64/BLUEJAY.h
+--- /dev/null
++++ b/pexpert/pexpert/arm64/BLUEJAY.h
+@@ -0,0 +1,8 @@
++/* Pixel 6a / GS101: generic ARMv8.2, 16K pages, GICv3 and PSCI. */
++#ifndef _PEXPERT_ARM64_BLUEJAY_H
++#define _PEXPERT_ARM64_BLUEJAY_H
++#include <pexpert/arm64/SWEET.h>
++#define BLUEJAY_FB_BASE 0xfac00000
++#define BLUEJAY_FB_BLOCK 0xfa000000
++#define BLUEJAY_FB_OFFSET 0x00c00000
++#endif
+diff --git a/pexpert/pexpert/arm64/board_config.h b/pexpert/pexpert/arm64/board_config.h
+--- a/pexpert/pexpert/arm64/board_config.h
++++ b/pexpert/pexpert/arm64/board_config.h
+@@ -98,7 +98,11 @@
+ #endif  /* ARM64_BOARD_CONFIG_BCM2837 */
+ 
+ #ifdef ARM64_BOARD_CONFIG_SWEET
++#if defined(ARM64_BOARD_CONFIG_BLUEJAY)
++#include <pexpert/arm64/BLUEJAY.h>
++#else
+ #include <pexpert/arm64/SWEET.h>
++#endif
+ 
+ #define MAX_L2_CLINE                   6
+ #define MAX_CPUS                       8
+diff --git a/pexpert/pexpert/arm64/Makefile b/pexpert/pexpert/arm64/Makefile
+--- a/pexpert/pexpert/arm64/Makefile
++++ b/pexpert/pexpert/arm64/Makefile
+@@ -18,7 +18,8 @@
+ 	H13.h \
+ 	VMAPPLE.h \
+ 	BCM2837.h \
+-	SWEET.h
++	SWEET.h \
++	BLUEJAY.h
+ 
+ 
+ # Headers installed into System.framework/PrivateHeaders (userspace internal SDK only).
+diff --git a/pexpert/pexpert/arm64/SWEET.h b/pexpert/pexpert/arm64/SWEET.h
+--- a/pexpert/pexpert/arm64/SWEET.h
++++ b/pexpert/pexpert/arm64/SWEET.h
+@@ -47,7 +47,11 @@
+  * virt, hyp) instead of the usual 13/14/11/10: the virtual timer XNU uses
+  * (CNTV) is INTID 16 + 3 = 19.
+  */
++#if defined(BLUEJAY)
++#define SWEET_VTIMER_INTID        27
++#else
+ #define SWEET_VTIMER_INTID        19
++#endif
+ #define SWEET_IPI_SGI             1       // SGI used for cross-CPU signals
+ 
+ #define GIC_SPURIOUS_IRQ          1023    // IRQ no. for GIC spurious interrupt
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -515,7 +515,15 @@
+ 
+ #if defined(SWEET)
+ 	/* Stage 0: white 64x32 band, no stack or page tables needed. */
++#if defined(BLUEJAY)
++	MOV64	x0, 0x1c300030
++	MOV64	x1, 0x3061
++	str		w1, [x0]
++	dsb		sy
++	MOV64	x0, (BLUEJAY_FB_BASE + 2368 * 4320)
++#else
+ 	MOV64	x0, (0x9c000000 + 2368 * 4320)
++#endif
+ 	mov		w1, #-1
+ 	mov		x2, #32
+ 	mov		x4, #4320
+@@ -680,13 +688,17 @@
+ 
+ #if defined(SWEET)
+ 	/*
+-	 * Splash framebuffer: one 32MB Normal-NC block in the EXISTING V=P
+-	 * L2 table. Both framebuffer and RAM use L1 index 0; another call to
+-	 * create_bootstrap_mapping would replace the RAM L2 table.
+-	 * SWEET uses 16K pages and all bring-up RAM is below 4GB, so the first
+-	 * V=P L2 page is bootstrap_pagetables + 2*PGBYTES.
+-	 */
++	 * Splash framebuffer: one aligned 32MB Normal-NC block in the
++	 * EXISTING V=P L2 table. With 16K pages, both framebuffer and the
++	 * high RAM banks lie below the 64GB L1 boundary. Another bootstrap
++	 * mapping would replace that RAM table. Bluejay's FB begins 12MB
++	 * into its block; retain that offset when installing the final VA.
++	 */
++#if defined(BLUEJAY)
++	MOV64	x10, BLUEJAY_FB_BLOCK
++#else
+ 	MOV64	x10, 0x9c000000
++#endif
+ 	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
+ 	orr		x11, x11, x10
+ 	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -11,7 +11,11 @@
+ #include <stdint.h>
+ #include <kern/misc_protos.h>
+ 
++#if defined(BLUEJAY)
++static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0xfac00000;
++#else
+ static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
++#endif
+ #define EARLY_FB early_fb
+ #define EARLY_WIDTH 1080u
+ #define EARLY_HEIGHT 2400u
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1832,6 +1832,13 @@
+  * for a Normal-NC framebuffer alias that survives bootstrap TTBR0 teardown.
+  */
+ #define SWEET_EARLY_FB_VA (VM_MIN_KERNEL_ADDRESS + ARM_TT_L2_SIZE)
++#if defined(BLUEJAY)
++#define SWEET_EARLY_FB_PHYS 0xfa000000ULL
++#define SWEET_EARLY_FB_OFFSET 0xc00000ULL
++#else
++#define SWEET_EARLY_FB_PHYS 0x9c000000ULL
++#define SWEET_EARLY_FB_OFFSET 0ULL
++#endif
+ 
+ static void
+ sweet_early_map_final(void)
+@@ -1843,7 +1850,7 @@
+ 	tt_entry_t *l2 = (tt_entry_t *)phystokv(l1 & ARM_TTE_TABLE_MASK);
+ 	tt_entry_t *slot = &l2[(va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT];
+ 	assert(*slot == ARM_TTE_EMPTY);
+-	*slot = 0x9c000000ULL | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
++	*slot = SWEET_EARLY_FB_PHYS | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
+ 	    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
+ 	    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) |
+ 	    ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX;
+@@ -2190,7 +2197,7 @@
+ 
+ #if defined(SWEET)
+ 	/* The final TTBR1 is live; leave the outgoing VA=PA framebuffer alias. */
+-	sweet_early_relocate(SWEET_EARLY_FB_VA);
++	sweet_early_relocate(SWEET_EARLY_FB_VA + SWEET_EARLY_FB_OFFSET);
+ #endif
+ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+ 
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -171,6 +171,11 @@
+ 	 * and arrives as an IRQ (see sleh_irq). GICR_IGROUPR0 reads as zero
+ 	 * from the non-secure side even after this write; delivery still works.
+ 	 */
++#if defined(BLUEJAY)
++	/* Mask inherited non-secure PPIs; we own only CNTV and SGI1. */
++	gicr_write32(0x10180, ~((1U << sweet_vtimer_intid) | (1U << SWEET_IPI_SGI)));
++	gicr_write32(0x10280, (1U << sweet_vtimer_intid) | (1U << SWEET_IPI_SGI));
++#endif
+ 	gicr_write32(GICR_IGROUPR0, 0xFFFFFFFF);
+ 	for (unsigned int i = 0; i < 32; i += 4) {
+ 		gicr_write32(GICR_IPRIORITYR0 + i, 0xA0A0A0A0);
+@@ -206,7 +211,11 @@
+ #if defined(SWEET)
+ 	// ABL leaves only ARE_NS set; Linux writes ARE_NS | EnableGrp1A | EnableGrp1
+ 	uint32_t gicd_ctlr = gicd_read32(GICD_CTLR);
++#if defined(BLUEJAY)
++	gicd_ctlr |= GICD_CTLR_ARE_NS | GICD_CTLR_ENABLEGRP1A;
++#else
+ 	gicd_ctlr |= GICD_CTLR_ARE_NS | GICD_CTLR_ENABLEGRP1A | GICD_CTLR_ENABLEGRP1;
++#endif
+ 	gicd_write32(GICD_CTLR, gicd_ctlr);
+ 	while (gicd_read32(GICD_CTLR) & GICD_CTLR_RWP) {
+ 		;
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -71,7 +71,15 @@
+ 
+ #define UFS_BLOCK       4096u
+ #define BOUNCE_SIZE     (1u << 20)
++#if defined(BLUEJAY)
++#define PRDT_CHUNK      4096u
++#define UPIU_SIZE       1024u
++#define BLUEJAY_USERDATA_FIRST 2290150ULL
++#define BLUEJAY_USERDATA_BLOCKS 14799694ULL
++#else
++#define UPIU_SIZE       512u
+ #define PRDT_CHUNK      (256u << 10)            /* PRDT byte count field: 18 bits */
++#endif
+ #define PRDT_MAX        (BOUNCE_SIZE / PRDT_CHUNK)
+ #define CMD_TIMEOUT_NS  (5ull * NSEC_PER_SEC)
+ #define CMD_SPIN_NS     (50ull * NSEC_PER_USEC)
+@@ -85,8 +93,8 @@
+ };
+ 
+ struct ucd {
+-	uint8_t cmd[512];
+-	uint8_t resp[512];
++	uint8_t cmd[UPIU_SIZE];
++	uint8_t resp[UPIU_SIZE];
+ 	struct {
+ 		uint32_t addr_lo, addr_hi, rsvd, dbc;
+ 	} prdt[PRDT_MAX];
+@@ -152,14 +160,39 @@
+ 	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
+ 	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
+ 
+-	assert(len <= BOUNCE_SIZE);
++	if (!cdb_len || cdb_len > 16 || len > BOUNCE_SIZE ||
++	    ufs_rd(REG_UTRLBA) != (uint32_t)(su.dma_pa + DMA_UTRL) ||
++	    ufs_rd(REG_UTRLBAU) != (uint32_t)((su.dma_pa + DMA_UTRL) >> 32) ||
++	    !(ufs_rd(REG_UTRLRSR) & 1) || ufs_rd(REG_UTRLDBR)) {
++		return EBUSY;
++	}
++#if defined(BLUEJAY)
++	/* Final write guard is independent of the GPT and boot arguments. */
++	if (write) {
++		if (!su.writable || su.lun != 0 || cdb_len != 10 || cdb[0] != 0x2a) {
++			return EPERM;
++		}
++		uint64_t lba = (uint64_t)cdb[2] << 24 | (uint64_t)cdb[3] << 16 |
++		    (uint64_t)cdb[4] << 8 | cdb[5];
++		uint32_t count = (uint32_t)cdb[7] << 8 | cdb[8];
++		if (!count || len != count * UFS_BLOCK || lba < BLUEJAY_USERDATA_FIRST ||
++		    lba - BLUEJAY_USERDATA_FIRST >= BLUEJAY_USERDATA_BLOCKS ||
++		    count > BLUEJAY_USERDATA_BLOCKS - (lba - BLUEJAY_USERDATA_FIRST)) {
++			return EPERM;
++		}
++	}
++#endif
+ 	bzero(utrd, sizeof(*utrd));
+ 	bzero(ucd, sizeof(*ucd));
+ 
+ 	ucd->cmd[0] = 0x01;                     /* COMMAND UPIU */
+ 	ucd->cmd[1] = len ? (write ? 0x20 : 0x40) : 0x00;      /* W: data out, R: data in */
+ 	ucd->cmd[2] = su.lun;
++#if defined(BLUEJAY)
++	ucd->cmd[3] = 0; /* task tag equals slot */
++#else
+ 	ucd->cmd[3] = ++su.tag;
++#endif
+ 	ucd->cmd[12] = (uint8_t)(len >> 24);
+ 	ucd->cmd[13] = (uint8_t)(len >> 16);
+ 	ucd->cmd[14] = (uint8_t)(len >> 8);
+@@ -171,7 +204,11 @@
+ 	utrd->dw2 = 0x0f;                       /* OCS invalid until updated */
+ 	utrd->ucdba = (uint32_t)ucd_pa;
+ 	utrd->ucdbau = (uint32_t)(ucd_pa >> 32);
+-	utrd->resp = (512u / 4) << 16 | (512u / 4);
++#if defined(BLUEJAY)
++	utrd->resp = UPIU_SIZE << 16 | UPIU_SIZE;
++#else
++	utrd->resp = (UPIU_SIZE / 4) << 16 | (UPIU_SIZE / 4);
++#endif
+ 	if (len) {
+ 		uint32_t n = 0;
+ 		for (uint32_t done = 0; done < len; done += PRDT_CHUNK, n++) {
+@@ -180,7 +217,11 @@
+ 			ucd->prdt[n].addr_hi = (uint32_t)((bounce_pa + done) >> 32);
+ 			ucd->prdt[n].dbc = chunk - 1;
+ 		}
+-		utrd->prdt = (1024u / 4) << 16 | n;
++#if defined(BLUEJAY)
++		utrd->prdt = (2u * UPIU_SIZE) << 16 | (n * 16u);
++#else
++		utrd->prdt = (2u * UPIU_SIZE / 4) << 16 | n;
++#endif
+ 	}
+ 
+ 	if (su.cache) {
+@@ -189,7 +230,7 @@
+ 		dma_sync(DMA_UCD + offsetof(struct ucd, resp), sizeof(ucd->resp));
+ 		if (len) {
+ 			dma_clean(DMA_UCD + offsetof(struct ucd, prdt),
+-			    (utrd->prdt & 0xffff) * sizeof(ucd->prdt[0]));
++			    ((len + PRDT_CHUNK - 1) / PRDT_CHUNK) * sizeof(ucd->prdt[0]));
+ 		}
+ 	} else {
+ 		dma_sync(DMA_UTRL, sizeof(*utrd));
+@@ -204,6 +245,10 @@
+ 	}
+ 	__builtin_arm_dsb(0xf);
+ 
++#if defined(BLUEJAY)
++	ufs_wr(0x1140, ufs_rd(0x1140) | 1);
++	ufs_wr(REG_IS, 0xffffffffu);
++#endif
+ 	ufs_wr(REG_UTRLDBR, 1);
+ 	uint64_t deadline;
+ 	nanoseconds_to_absolutetime(CMD_TIMEOUT_NS, &deadline);
+@@ -219,7 +264,11 @@
+ 	while (ufs_rd(REG_UTRLDBR) & 1) {
+ 		uint64_t now = mach_absolute_time();
+ 		if (now > deadline) {
++#if defined(BLUEJAY)
++			ufs_wr(REG_UTRLCLR, 1u);
++#else
+ 			ufs_wr(REG_UTRLCLR, ~1u);
++#endif
+ 			printf("SWEET UFS: command 0x%02x timed out\n", cdb[0]);
+ 			return ETIMEDOUT;
+ 		}
+@@ -316,7 +365,7 @@
+ 	memcpy(&entry_lba, b + 72, 8);
+ 	memcpy(&nent, b + 80, 4);
+ 	memcpy(&esz, b + 84, 4);
+-	if (esz != 128 || nent == 0 || nent * esz > BOUNCE_SIZE) {
++	if (esz != 128 || nent == 0 || nent > BOUNCE_SIZE / esz) {
+ 		printf("SWEET UFS: unsupported GPT entries %u x %u\n", nent, esz);
+ 		return ENXIO;
+ 	}
+@@ -345,6 +394,13 @@
+ 		if (last < first) {
+ 			return ENXIO;
+ 		}
++#if defined(BLUEJAY)
++		if (strcmp(want, "userdata") || first != BLUEJAY_USERDATA_FIRST ||
++		    last - first + 1 != BLUEJAY_USERDATA_BLOCKS) {
++			printf("BLUEJAY UFS: GPT userdata bounds differ; refusing device\n");
++			return EPERM;
++		}
++#endif
+ 		su.first_block = first;
+ 		su.nblocks = last - first + 1;
+ 		return 0;
+@@ -352,6 +408,74 @@
+ 	printf("SWEET UFS: no GPT partition named \"%s\"\n", want);
+ 	return ENOENT;
+ }
++
++#if defined(BLUEJAY)
++/* These UIC commands alter only transient link state. */
++static int
++bluejay_uic(uint32_t cmd, uint32_t arg1, uint32_t *value)
++{
++	if (!(ufs_rd(REG_HCS) & (1u << 3))) {
++		return EBUSY;
++	}
++	ufs_wr(REG_IS, 0xffffffffu);
++	ufs_wr(0x94, arg1);
++	ufs_wr(0x98, 0);
++	ufs_wr(0x9c, 0);
++	__builtin_arm_dsb(0xf);
++	ufs_wr(0x90, cmd);
++	for (unsigned i = 0; i < 1000000; i++) {
++		if (ufs_rd(REG_IS) & 0x400) {
++			*value = ufs_rd(0x9c);
++			uint32_t rc = ufs_rd(0x98) & 0xff;
++			ufs_wr(REG_IS, ufs_rd(REG_IS));
++			return rc ? EIO : 0;
++		}
++		delay(1);
++	}
++	return ETIMEDOUT;
++}
++
++static int
++bluejay_link_resume(void)
++{
++	ufs_wr(0x11b0, ufs_rd(0x11b0) & ~0x1fu);
++	ufs_wr(0x11b4, ufs_rd(0x11b4) & ~0xf0u);
++	ufs_wr(0x18, 0); /* automatic Hibern8 off while owned */
++	uint32_t mode = 0, port = 0, ignored = 0;
++	int error = bluejay_uic(1, 0x1571u << 16, &mode);
++	if (!error) {
++		error = bluejay_uic(1, 0x4020u << 16, &port);
++	}
++	if (!error) {
++		error = bluejay_uic(0x18, 0, &ignored);
++	}
++	printf("BLUEJAY UFS: link resume rc=%d power=0x%x cport=%u\n", error, mode, port);
++	return error;
++}
++
++static int
++bluejay_device_resume(void)
++{
++	static const uint8_t sense[6] = { 3, 0, 0, 0, 96, 0 };
++	static const uint8_t active[6] = { 0x1b, 0, 0, 0, 0x10, 0 };
++	/* ABL leaves LUNs stopped: 02/04/02 requires DEVICE WLUN power active. */
++	su.lun = 0xd0;
++	int error = EIO;
++	for (unsigned i = 0; i < 3; i++) {
++		error = ufs_scsi(sense, sizeof(sense), 96, false);
++		if (error == EBUSY || error == ETIMEDOUT) {
++			break;
++		}
++		error = ufs_scsi(active, sizeof(active), 0, false);
++		if (!error || error == EBUSY || error == ETIMEDOUT) {
++			break;
++		}
++	}
++	su.lun = 0;
++	printf("BLUEJAY UFS: device active rc=%d\n", error);
++	return error;
++}
++#endif
+ 
+ static int
+ ufs_take_over_host(void)
+@@ -372,12 +496,24 @@
+ 		return ENXIO;
+ 	}
+ 	ufs_wr(REG_IE, 0);                      /* polled operation */
++#if defined(BLUEJAY)
++	int resume_error = bluejay_link_resume();
++	if (resume_error) {
++		return resume_error;
++	}
++#endif
+ 	ufs_wr(REG_IS, ufs_rd(REG_IS));
+ 	ufs_wr(REG_UTRLRSR, 0);
+ 	uint64_t list = su.dma_pa + DMA_UTRL;
+ 	ufs_wr(REG_UTRLBA, (uint32_t)list);
+ 	ufs_wr(REG_UTRLBAU, (uint32_t)(list >> 32));
+ 	ufs_wr(REG_UTRLRSR, 1);
++#if defined(BLUEJAY)
++	ufs_wr(0x1100, 12);
++	ufs_wr(0x1104, 12);
++	ufs_wr(0x1160, 0x0a);
++	ufs_wr(0x116c, (1u << 31) | (3u << 27) | 3);
++#endif
+ 	/* Never ring a doorbell unless the host uses our list. */
+ 	if (ufs_rd(REG_UTRLBA) != (uint32_t)list || ufs_rd(REG_UTRLBAU) != (uint32_t)(list >> 32) ||
+ 	    !(ufs_rd(REG_UTRLRSR) & 1)) {
+@@ -599,6 +735,11 @@
+ 		return ENXIO;
+ 	}
+ 	PE_parse_boot_argn("ufsroot", want, sizeof(want));
++#if defined(BLUEJAY)
++	if (strcmp(want, "userdata")) {
++		return EPERM;
++	}
++#endif
+ 	uint32_t rw = 0;
+ 	PE_parse_boot_argn("ufsrw", &rw, sizeof(rw));
+ 	uint32_t cache = 0, wait = 0;
+@@ -607,7 +748,15 @@
+ 	su.cache = (cache == 1);
+ 	su.wait = (wait == 1);
+ 
++#if defined(BLUEJAY)
++	if (reg[0] != 0x14700000ULL || reg[1] < 0x2000) {
++		return ENXIO;
++	}
++#endif
+ 	su.regs = ml_io_map(reg[0], reg[1]);
++	if (!su.regs) {
++		return ENOMEM;
++	}
+ 	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
+ 	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+ 		printf("SWEET UFS: no contiguous DMA memory\n");
+@@ -623,6 +772,11 @@
+ 
+ 	lck_mtx_lock(&sweet_ufs_lock);
+ 	error = ufs_take_over_host();
++#if defined(BLUEJAY)
++	if (!error) {
++		error = bluejay_device_resume();
++	}
++#endif
+ 	if (!error) {
+ 		static const uint8_t tur[6] = { 0x00 };
+ 		/* The first command after the bootloader may report a unit attention. */
+@@ -657,9 +811,11 @@
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
++#if !defined(BLUEJAY)
+ 	sweet_keys_init();
+ 	sweet_touch_init();
+ 	sweet_usb_probe();
++#endif
+ 	return 0;
+ }
+ 
+diff --git a/bsd/dev/sweet_spmi.c b/bsd/dev/sweet_spmi.c
+--- a/bsd/dev/sweet_spmi.c
++++ b/bsd/dev/sweet_spmi.c
+@@ -54,6 +54,10 @@
+ int
+ sweet_spmi_init(void)
+ {
++#if defined(BLUEJAY)
++	/* Qualcomm MMIO is unavailable on GS101. */
++	return -1;
++#endif
+ 	if (sp_attempted) {
+ 		return sp_ready ? 0 : -1;
+ 	}
+diff --git a/bsd/dev/sweet_rpmh.c b/bsd/dev/sweet_rpmh.c
+--- a/bsd/dev/sweet_rpmh.c
++++ b/bsd/dev/sweet_rpmh.c
+@@ -327,6 +327,10 @@
+ int
+ sweet_rpmh_vreg_enable(const char *res, unsigned mv)
+ {
++#if defined(BLUEJAY)
++	/* Qualcomm MMIO is unavailable on GS101. */
++	return ENOTSUP;
++#endif
+ 	/* Board-specific helper: do not apply PMIC5-LDO policy to arbitrary resources. */
+ 	if (!res || strcmp(res, "ldoc11") || mv < 2950 || mv > 3400) {
+ 		printf("SWEET RPMH: expected ldoc11 and 2950..3400 mV\n");
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -125,6 +125,10 @@
+ void
+ sweet_keys_init(void)
+ {
++#if defined(BLUEJAY)
++	/* Qualcomm MMIO is unavailable on GS101. */
++	return;
++#endif
+ 	int enabled = 1;
+ 	thread_t thread;
+ 	if (keys_started) {
+diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -638,6 +638,10 @@
+ void
+ sweet_touch_init(void)
+ {
++#if defined(BLUEJAY)
++	/* Qualcomm MMIO is unavailable on GS101. */
++	return;
++#endif
+ 	int enabled = 1;
+ 	thread_t thread;
+ 	if (st.started) {
+diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -76,6 +76,10 @@
+ void
+ sweet_usb_probe(void)
+ {
++#if defined(BLUEJAY)
++	/* Qualcomm MMIO is unavailable on GS101. */
++	return;
++#endif
+ 	int enabled = 1;
+ 	uint32_t gdscr, cbcr[sizeof(usb_cbcr) / sizeof(usb_cbcr[0])];
+ 	bool clocks_on = true;
+diff --git a/iokit/Kernel/arm/SweetBattery.cpp b/iokit/Kernel/arm/SweetBattery.cpp
+--- a/iokit/Kernel/arm/SweetBattery.cpp
++++ b/iokit/Kernel/arm/SweetBattery.cpp
+@@ -264,7 +264,11 @@
+ 	}
+ 	int real = 0;
+ 	(void)PE_parse_boot_argn("sweetbattery", &real, sizeof(real));
++#if defined(BLUEJAY)
++	fReal = false;
++#else
+ 	fReal = real == 1 && sweet_spmi_init() == 0;
++#endif
+ 	/* Publish a complete source BEFORE registerService wakes powerd. */
+ 	poll();
+ 	if (fReal) {

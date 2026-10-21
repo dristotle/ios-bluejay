@@ -6,6 +6,7 @@ No XNU or iOS boot on bluejay achieved yet.
 
 - Checkout `/home/catto/ios-bluejay`, branch `bluejay-port`, upstream 425b251.
   Build fork `dristotle/ios-sweet`, authenticated as dristotle. No port CI yet.
+  Shim milestone committed db3fc17. BLUEJAY XNU patch0082 ready for CI.
 - User explicitly allows wiping userdata. Never modify win, esp, GPT,
   boot/recovery, calibration or modem partitions. Use temporary fastboot boot.
 - Verified userdata sda27: start 18321200, size 118397552 in 512-byte units;
@@ -49,8 +50,17 @@ No XNU or iOS boot on bluejay achieved yet.
   prepare small Linux guest or equivalent bounded HFS+ staging method.
   Host C free ~15GB; WSL virtual free space is misleading.
 
-Next: commit shim milestone; build BLUEJAY kernel patch using the verified
-UFS wake sequence and exact userdata limits, syntax check and macOS CI;
+- Patch0082 adds BLUEJAY machine config (plain ARM64), high-bank bootstrap
+  framebuffer block/offset, GIC masking, byte-unit UFS descriptors, 4K PRDT,
+  link/device resume and hard userdata first/count checks before WRITE10.
+  Qualcomm keys/touch/USB/RPMh/SPMI and real battery are guarded off.
+  11 C/C++ files syntax-checked with Ubuntu clang21: all pass. start.s
+  assembled to Mach-O successfully. Patch after upstream0081:17 MATCH.
+- mkbluejayadt.py uses verified memory/GIC/UFS/timer facts, iPhone X
+  identity, real A55/A78/X1 CPU types, and synthetic chip identity.
+  Guest Linux7.0 kernel/modules with HFS+ downloaded and extracted.
+
+Next: commit/push BLUEJAY0082 and dispatch macOS CI;
 prepare/tweak HFS+ root; install only in userdata; temporary boot real XNU.
 
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
