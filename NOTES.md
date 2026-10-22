@@ -295,10 +295,27 @@ screen. Touch and home-screen interaction remain unverified.
   Panic output draws again. debug/serial/kprintf boot flags remain enabled;
   no logger is disabled. Actual character-writer host test covers early
   display+log,muted display+retained log and panic display/CRLF+log,ASan/UBSan
-  PASS. Isolated git apply--check/apply output MATCH;arm64 compile pending.
+  PASS. Isolated git apply--check/apply output MATCH;arm64 compile0/1 failures.
   Touch commit e7658ee pushed ONLY to fork;CI39794963679 queued for macOS14.
   Dispatch latest HEAD after0085 because this bypass would otherwise still
   draw some debug messages over SpringBoard. No new hardware boot yet.
+- **Fork CI queued during confirmed GitHub Actions incident, 14:29UTC:**
+  Latest HEAD a61bc40 contains0084 touch+0085 persistent kprintf;both pushed
+  ONLY to dristotle/ios-sweet bluejay-port. User requested rerun of stuck CI.
+  Fresh dispatch39795615846 for a61bc40 remains queued,runner_id0,no steps.
+  Earlier39794963679(e7658ee) and39795443692(a61bc40) also queued.
+  Normal/force cancellation endpoints return409 "not in progress";
+  rerun endpoint403 "already running". Repo public,Actions enabled,workflow
+  active. GitHub status confirms Actions degraded since14:18UTC:
+  incident q29p76qtnkyk "Incident with Actions Results",investigating delays
+  in workflow/step results and repository updates (https://stspg.io/44w94j036yc8).
+  Do not keep creating duplicate runs;use39795615846 after service recovers.
+  Header-v4 touch image builder and boot helper prepared under Windows
+  ios-bluejay-artifacts,prepare-bluejay-touch-image.py/boot-bluejay-ios-touch.py;
+  preserve same0083 GUI ADT/arguments and immutable installed root.
+  Output planned0085-ios-v1-touch.img;not built or hardware-tested yet.
+  Recovery read-only confirms touch rails1.8V/3.3V,AP/AOC request/grant low,
+  reset high,IRQ high;source bases/gpa8-6 correct. Phone remains recovery.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
