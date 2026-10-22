@@ -3,8 +3,9 @@
 This section supersedes upstream sweet observations below. Objective: boot
 real iPhone X iOS 16.7.16 (20H392) userland and XNU on Pixel 6a bluejay.
 Real BLUEJAY XNU boots the installed HFSX root and runs Apple launchd,
-backboardd and other iOS daemons on four A55 cores. A usable iOS GUI
-has not been observed; the first root boot reset while working.
+backboardd and other iOS daemons on four A55 cores. Disabling the inherited
+GS101 watchdogs and shim resets lets it run >9minutes and display the Apple
+logo. SpringBoard remains blocked in startup; home screen unverified.
 
 - Checkout `/home/catto/ios-bluejay`, branch `bluejay-port`, upstream 425b251.
   Build fork `dristotle/ios-sweet`, authenticated as dristotle.
@@ -158,6 +159,21 @@ has not been observed; the first root boot reset while working.
   First boot log already shows exec SpringBoard and AppleCLCD opened by
   backboardd. Missing IOAcceleratorES polling alone is inconclusive: upstream
   Sweet also polls without a GPU while CPU rendering can later work.
+- **Apple logo + sustained iOS execution verified, 2026-10-22:**
+  User reports watchdog-disabled image reaches Apple logo and stays on; waited
+  three further minutes then manually restarted. Recovery connected12:49:33UTC.
+  Extended persistent log boot-0083-ios-v1-nowdt.bin/.txt:148106bytes,flush118,
+  no wrap/panic. SpringBoard26 and backboardd56 each exec1, recorded crashes0.
+  Five periodic stack samples0..4 prove live execution >=570seconds after
+  sampler start (90+4*120). No automatic reset observed during this run.
+  IOSurface1125x2436 BGRA buffers2/3 created; backboardd successful display
+  swaps3..7 recorded. Apple logo is real userspace framebuffer activity, but
+  no home screen/Setup yet. Only driverkitd crash recorded; fairplayd.H2 and
+  bluetoothd relaunch (missing hardware). Repeated samples show SpringBoard
+  blocked on same synchronous IPC/dispatch stack, backboardd main in runloop.
+  Decode slide0x5387c000 cache stacks; DataMigration/activation are possibilities
+  pending symbols. Phone now adb recovery, iOS userdata not mounted in Linux.
+  Original immutable16GiB root remains intact; never reformat/reflash it.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
@@ -229,11 +245,11 @@ has not been observed; the first root boot reset while working.
   including bounded OS ZIP member via ipsw-slice. Copy running into sparse
   research/ios16-bluejay-v1.img (16GiB logical); no device writes.
 
-Next: await photo/screen state of the running0083-ios-v1-nowdt test.
-Verify watchdog readbacks and continued operation beyond reset interval.
-After recovery becomes available, pull log with Windows
-pull-bluejay-xnu-log.py boot-0083-ios-v1-nowdt; compare userland, sampler,
-framebuffer swap and panic evidence. Continue toward a visible iOS GUI.
+Next: symbolicate the extended boot samples (shared-cache slide0x5387c000)
+to identify SpringBoard's startup IPC wait. Read Apple cache from the existing
+IPSW/root image; no new kernel CI needed for symbols. Then fix the observed
+startup dependency and temporary-boot a watchdog-disabled image again.
+Phone is in adb recovery, latest code/notes9559a5b on dristotle fork only.
 Do not recopy/reformat/reflash the completed local/installed root.
 
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
