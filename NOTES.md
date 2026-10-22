@@ -288,6 +288,17 @@ screen. Touch and home-screen interaction remain unverified.
   Isolated git apply--check/apply produces all4 compiled input files MATCH.
   Debug/persistent logging remains enabled;next build+temp boot with
   sweetfb_noconsole=1 so logs do not cover SpringBoard. Hardware untested.
+- **Patch0085: retain direct kprintf debug output without GUI text:**
+  Existing sweetfb_noconsole only gates _cnputs;PE_kputc points directly to
+  serial_putc_crlf and bypasses it. Bluejay pe_kprintf now appends each debug
+  character to the persistent ring before applying the same GUI suppression.
+  Panic output draws again. debug/serial/kprintf boot flags remain enabled;
+  no logger is disabled. Actual character-writer host test covers early
+  display+log,muted display+retained log and panic display/CRLF+log,ASan/UBSan
+  PASS. Isolated git apply--check/apply output MATCH;arm64 compile pending.
+  Touch commit e7658ee pushed ONLY to fork;CI39794963679 queued for macOS14.
+  Dispatch latest HEAD after0085 because this bypass would otherwise still
+  draw some debug messages over SpringBoard. No new hardware boot yet.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each

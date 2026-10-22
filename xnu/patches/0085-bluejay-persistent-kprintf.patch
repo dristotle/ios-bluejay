@@ -1,0 +1,29 @@
+diff --git a/pexpert/arm/pe_kprintf.c b/pexpert/arm/pe_kprintf.c
+--- a/pexpert/arm/pe_kprintf.c
++++ b/pexpert/arm/pe_kprintf.c
+@@ -29,6 +29,12 @@
+ static SIMPLE_LOCK_DECLARE(kprintf_lock, 0);
+ 
+ static void serial_putc_crlf(char c);
++
++#if defined(ARM64_BOARD_CONFIG_BLUEJAY)
++/* kprintf bypasses _cnputs: retain its output in the same persistent ring. */
++extern void sweet_log_append(const char *c, int size);
++extern int sweet_console_muted;
++#endif
+ 
+ __startup_func
+ static void
+@@ -156,6 +162,12 @@
+ static void
+ serial_putc_crlf(char c)
+ {
++#if defined(ARM64_BOARD_CONFIG_BLUEJAY)
++	sweet_log_append(&c, 1);
++	if (sweet_console_muted && !panic_active()) {
++		return;
++	}
++#endif
+ 	if (c == '\n') {
+ 		uart_putc('\r');
+ 	}
