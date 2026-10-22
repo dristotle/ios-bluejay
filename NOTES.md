@@ -93,20 +93,24 @@ initialization. No iOS userland boot on bluejay achieved yet.
   SHA25620b07dd145f964cf6e81f89188f94e922cd030fa07a031eead927f46a1d8746e;
   kernel0083, CPU alias ADT, cpus4/rd=ufsroot0/ufsrw1/rootrw1, upstream
   ignition/launchd arguments, ufslogsecs2. Not booted yet.
-- **Installation in progress (userdata ONLY):** first bounded adb stdin
-  stream failed early with truncated RAW/BrokenPipe. Userdata now partially
-  overwritten; do not describe it as a bootable Android/iOS root yet.
-  Protected post-root snapshot MATCH after failure; no win/esp/GPT writes.
-  Native RAM-only32MiB adb shell checksum reproduced Ctrl-Z truncation
-  (only26bytes); length-framed local adb-forward socket passed full hash.
-  User steered to fastboot flashing. Preparing RAW/zero-FILL sparse file
-  C:/Users/Catto/ios-bluejay-artifacts/ios16-bluejay-v1.simg from immutable
-  verified image; complete16GiB coverage, no DONT_CARE in input.
-  Root decoder validation and sparse hash pending. Then fastboot flash
-  userdata ONLY, return to recovery, full16GiB readback SHA256 + protected
-  hashes, then temporary boot prepared0083-ios-v1 image.
-  Read-only current slot-a boot backup bluejay-installed-boot-a.img64MiB,
-  SHA25669dc5735bc1e98ede4f9eaf7c4dca4bab66cd3a707f5f567ff407758f560cae1.
+- **2026-10-22 resumed; fastboot userdata flash running:** saved sparse
+  file ios16-bluejay-v1.simg12161842172bytes/29306chunks independently
+  parsed natively, all16GiB decoded, complete RAW/zero-FILL coverage.
+  Decoded hash matches immutable verified root; sparse SHA256f93a24b968c392f90d888ab5eef5ab1a479a41b8a7dd366abeced35b71df8040.
+  User authorized fastboot flashing.512MiB split rejected at download
+  with unsupported image size, before a flash.128MiB split accepted:
+  root-fastboot-flash-128m.log,93parts, send+write OKAY so far.
+  Exec session86685; flash helper returns to recovery afterwards.
+  Do not boot or interrupt during flashing. Readback verification pending:
+  Windows verify-bluejay-root-native.py hashes first16GiB on device and
+  compares win/esp/GPT/layout baseline. Prepared0083-ios-v1 not booted yet.
+  Initial bounded adb stdin writer failed early with truncated RAW;
+  native32MiB RAM-only test reproduces Ctrl-Z truncation at26bytes.
+  Length-framed local adb-forward socket passed full32MiB hash but user
+  preferred fastboot. Userdata partial until flash+readback complete.
+  Protected post-root snapshot MATCH before new flash; no win/esp/GPT
+  writes. Read-only boot-a backup64MiB SHA256
+  69dc5735bc1e98ede4f9eaf7c4dca4bab66cd3a707f5f567ff407758f560cae1.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
@@ -178,8 +182,8 @@ initialization. No iOS userland boot on bluejay achieved yet.
   including bounded OS ZIP member via ipsw-slice. Copy running into sparse
   research/ios16-bluejay-v1.img (16GiB logical); no device writes.
 
-Next: complete validated sparse conversion, fastboot flash userdata only.
-Verify full16GiB readback SHA256 and protected baseline in recovery,
+Next: let fastboot128MiB split flash finish. Verify full16GiB readback
+SHA256 and protected baseline in recovery,
 then temporary boot bluejay-xnu-0083-ios-v1.img.
 Inspect persistent logs/photos; continue to real iOS launchd and SpringBoard.
 
