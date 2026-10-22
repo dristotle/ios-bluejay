@@ -198,6 +198,38 @@ logo. SpringBoard remains blocked in startup; home screen unverified.
   fastboot boot accepted13:06:12UTC,send0.172s/boot0.005s,total0.186s.
   User asked to wait >=3minutes then return to recovery and report screen.
   Next pull boot-0083-ios-v1-lsd persistent log and decode server stacks.
+- **LaunchServices wait traced to missing Wi-Fi identity, 2026-10-22:**
+  User reports the focused lsd boot stayed at Apple logo, then returned to
+  adb recovery. Log boot-0083-ios-v1-lsd:151046bytes,flush107,samples0..3,
+  shared-cache slide0x1ccb8000. lsd97 t2 remains in InstalledContentLibrary
+  _GenerateBuiltInAppInstallSessionID -> MGCopyAnswer(UniqueDeviceID) ->
+  Wi-Fi address lookup. MobileGestalt 19c571724 first tries
+  /chosen/mac-address-wifi0; absent properties and sdio/wlan/marconi-wifi
+  providers reach 19c57176c -> 19c57c084. That registers for
+  IONetworkController and runs MobileGestaltRunLoopMode in another thread;
+  caller19c57c4b8 waits forever on a dispatch semaphore. No network driver
+  is registered. Symbol gaps in MG must be resolved by disassembly, not the
+  nearest exported MGSetAnswer name. App identity key confirmed by salted
+  MD5 re6Zb+zwFKJNlkQTUeT+/w; WifiAddress gI6iODv8MZuiP0IA+efJCw.
+  lsd main waits performJournalRecovery/restoreInactiveInstalls; clients wait
+  LaunchServices DB seeding. No installd exec observed. fairplayd.H2(56) and
+  bluetoothd(55) relaunch; xpcproxy executes their jobs, no recorded xpcproxy
+  crash. Only driverkitd crash recorded; no SpringBoard/backboardd panic.
+  Read-only per-framework symbols/disassembly in research/ios16-*.txt;
+  Windows symbolicated evidence boot-0083-ios-v1-lsd-stacks.txt.
+- **MAC identity payload fix built and temporary-booted:**
+  tools/mkbluejayadt.py now sets /chosen/mac-address-wifi0 to stable
+  locally administered six-byte02424c554501. No Wi-Fi capability/driver is
+  claimed. Existing payload device tree changed by exactly that property;
+  removing it serializes byte-identical to the prior tree. Kernel and443byte
+  boot arguments byte-identical; GS101 watchdogs and timed reset disabled.
+  Header-v4/legacy-LZ4 roundtrip and Image-size verifier PASS.
+  Image bluejay-xnu-0083-ios-v1-mac.img,7081984bytes,SHA256
+  09f03f127d43ded75ee446c87c671c7335c302276e4f424fd4a9b4ba695bfb54.
+  fastboot boot accepted 2026-10-22T13:34:48.458054+00:00,send0.195s/boot0.010s/
+  total0.223s. No partition flashes; installed iOS root not recopied or
+  modified from recovery. User asked to observe >=3minutes then return to
+  recovery and report screen. Home screen outcome remains pending.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
@@ -269,10 +301,12 @@ logo. SpringBoard remains blocked in startup; home screen unverified.
   including bounded OS ZIP member via ipsw-slice. Copy running into sparse
   research/ios16-bluejay-v1.img (16GiB logical); no device writes.
 
-Next: focused LaunchServices diagnostic0083-ios-v1-lsd is running on phone.
-Wait for user to return to recovery after >=3minutes; pull its persistent log
-with Windows pull-bluejay-xnu-log.py boot-0083-ios-v1-lsd. Decode lsd and
-dependencies to fix the observed LaunchServices database reseed wait.
+Next: MAC identity diagnostic0083-ios-v1-mac is running on phone.
+After user returns to recovery, read the last1025blocks of userdata only
+with Windows pull-bluejay-xnu-log.py boot-0083-ios-v1-mac. Check that lsd
+leaves the IONetworkController wait and LaunchServices finishes DB seeding.
+Keep watchdogs disabled, and preserve the installed root and all protected
+partitions. Home screen and real input/USB support are still unverified.
 Keep watchdog-disabled shim on all subsequent temporary images. No kernel
 change/CI required for current diagnostic. Fork only; no upstream push/merge.
 Do not recopy/reformat/reflash the completed local/installed root.

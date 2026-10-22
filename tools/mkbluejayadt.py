@@ -34,6 +34,10 @@ def build(seed=None):
     chosen = next(n for n in tree.children if n.name == 'chosen')
     setprop(chosen, 'firmware-version', b'bluejay-shim\0')
     setprop(chosen, 'system-firmware-version', b'bluejay-shim\0')
+    # Built-in app installation IDs require MobileGestalt's device identity.
+    # Without this iBoot/syscfg property it waits for IONetworkController,
+    # which has no driver yet. Use a stable locally administered address.
+    setprop(chosen, 'mac-address-wifi0', bytes.fromhex('02424c554501'))
     cpus = next(n for n in tree.children if n.name == 'cpus')
     for core, cpu in enumerate(cpus.children):
         kind = 'cortex-a55' if core < 4 else 'cortex-a78' if core < 6 else 'cortex-x1'
