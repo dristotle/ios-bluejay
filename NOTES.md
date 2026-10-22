@@ -316,6 +316,18 @@ screen. Touch and home-screen interaction remain unverified.
   Output planned0085-ios-v1-touch.img;not built or hardware-tested yet.
   Recovery read-only confirms touch rails1.8V/3.3V,AP/AOC request/grant low,
   reset high,IRQ high;source bases/gpa8-6 correct. Phone remains recovery.
+- **Requested CI rerun accepted, 2026-10-22 14:35UTC:**
+  Run39795615846 attempt1 became completed/cancelled at14:33:24UTC.
+  gh run rerun succeeded;attempt2 accepted14:35:00UTC,building a61bc40
+  (0084 ACPM/FTM5 touch+0085 persistent kprintf) on macos-14.
+  URL https://github.com/dristotle/ios-sweet/actions/runs/39795615846/attempts/2.
+  Latest check:queued,no runner assigned,no steps. GitHub status still
+  investigating q29p76qtnkyk Actions degradation since14:18UTC.
+  Do not dispatch duplicates;follow this attempt and download its artifacts.
+  Current source HEAD a896cd5 differs only in handoff notes;touch+logging
+  implementation already locally validated. No new phone boot or storage
+  writes. After successful CI,use prepare-bluejay-touch-image.py then
+  boot-bluejay-ios-touch.py;root must not be recopied/reformatted/reflashed.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
