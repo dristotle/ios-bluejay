@@ -1,203 +1,174 @@
-# ios-sweet
+# iOS on Google Pixel 6a (bluejay)
 
-**Apple's iOS 16 running on a Redmi Note 10 Pro.**
+**iOS 16.7.16 boots on the Pixel 6a, with a working touchscreen.**
 
-This project ports Apple's open-source XNU kernel (xnu-8796, the iOS 16 generation) to the Xiaomi Redmi Note 10 Pro (`sweet`, Qualcomm SM7150 / Snapdragon 732G). On top of it runs the **unmodified iOS 16.7.16 (20H392) userland of the iPhone X**: launchd, the system daemons, backboardd, SpringBoard and the stock apps.
+This fork ports Apple's open-source XNU 8796 kernel to Google's GS101/Tensor platform. It runs the iPhone X iOS 16.7.16 (20H392) userland, including dyld, launchd, backboardd and SpringBoard, from a journaled HFSX filesystem in `userdata`.
 
-As of **2026-10-18** the phone boots to the **iOS home screen**. You can unlock it, open Settings, pull down Control Center and the notification center, and use the touchscreen and the hardware buttons. Rendering runs entirely on the CPU; there is no GPU driver.
+On **22 October 2026**, the phone reached the real iOS lock screen, the user confirmed touchscreen input, and console text stopped covering the GUI. Debug logging remains enabled and is saved to the persistent log. The successful kernel contains patches **0001–0085**.
 
-> Experimental bring-up, not a usable phone OS. Many things are missing or stubbed (see below), and Apple's security model is mostly switched off. It installs into the `userdata` partition and so **erases Android's user data**.
+The Bluejay work lives in [`dristotle/ios-sweet`, branch `bluejay-port`](https://github.com/dristotle/ios-sweet/tree/bluejay-port). It builds on [dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet), the original Redmi Note 10 Pro port. Hardware details below refer to **Bluejay**; inherited SWEET drivers are not evidence of Pixel support.
 
-## What works
+## Verified status
 
-| Area | State |
+| Area | Bluejay result |
 | --- | --- |
-| Boot | Stock Xiaomi bootloader → `fastboot boot` of our shim → XNU. Nothing is flashed to the boot partitions |
-| CPU | 6 of the 8 cores (the six Cortex-A55s) via PSCI, 16K pages, GICv3 interrupts, timers |
-| Memory | About 3.95 GiB of the upper DDR bank |
-| Storage | Own UFS host driver; the iOS root is a journaled HFS+ volume in `userdata`, read/write |
-| iOS userland | Real iPhone X 16.7.16 root filesystem and shared cache; launchd and the system daemons run |
-| Display | Kernel IOSurface + IOMobileFramebuffer (`AppleCLCD`) services; CoreAnimation renders in software; frames are copied into the bootloader's framebuffer. Presented to iOS as an iPhone X panel (1125×2436) |
-| GUI | backboardd, SpringBoard, lock screen, home screen, Control Center, notification center, Settings |
-| Touch | Goodix GT9896 over I²C (GENI), rail enabled through RPMh, delivered as HID digitizer events |
-| Buttons | Power, volume up/down (PMIC through SPMI) as HID consumer keys; lock/wake works |
-| Battery | IOPMPowerSource service (static 100 %, charging icon; real fuel-gauge readout prepared) |
-| Device identity | iPhone X (`iPhone10,3` / `D22AP`): no Home button, gesture UI |
-| Activation | Native "Hactivation" path of mobileactivationd, chosen through device-tree security status. No Apple servers involved |
+| Boot | Unlocked Pixel bootloader → temporary `fastboot boot` → shim → XNU. Android boot header **v4**, **legacy LZ4** kernel compression |
+| CPU and memory | Four Cortex-A55 cores, PSCI through SMC, GICv3 IRQs, 24 MHz timer, 16 KiB pages; kernel uses the upper 4 GiB RAM bank |
+| Storage | GS101 UFS driver resumes the bootloader-initialized link and reads/writes the iOS HFSX root in `userdata` |
+| iOS userspace | Real iPhone X 16.7.16 userland and shared cache; launchd, backboardd and SpringBoard run; lock screen observed |
+| Display | Software rendering through IOSurface and IOMobileFramebuffer/AppleCLCD services, copied into the Pixel's 1080×2400 framebuffer. iOS sees an iPhone X display at 1125×2436 |
+| Touch | ST FTM5 through GPIO SPI, ACPM PMIC power control and AP/AOC bus ownership handshake; input reaches the iOS HID digitizer |
+| Logging | Kernel/debug and raw touch logs stay enabled. Text is hidden after GUI presentation; panic output can draw again |
+| Watchdogs | Both inherited GS101 hardware watchdogs are stopped and checked by the shim. The shim's diagnostic timed reset is disabled |
 
-## What does not work (yet)
+The touch decoder supports ten contact IDs and enter/move/leave events. The user confirmed touch works; separate multitouch, suspend and long-duration tests have not been recorded.
 
-- **Navigation:** you cannot leave an app (the home gesture and AssistiveTouch Home do nothing yet).
-- **No Wi-Fi, Bluetooth, cellular, audio, camera, sensors, GPS or SEP / Face ID.** Daemons for them start and fail or keep relaunching.
-- **No GPU.** Everything is drawn by the CPU at roughly 20–30 fps. The two Cortex-A76 cores are not used yet.
-- **Few apps.** The image has only what is on the system volume. There is no App Store, no Apple ID, and some Settings pages are empty.
-- **Slow boot:** about 4 minutes on the Apple logo.
-- **Security is off:** permissive code signing (AMFI) and sandbox policies, a stub AppleKeyStore, no data protection. Do not put anything personal on it.
+There are no Bluejay drivers yet for Wi-Fi, Bluetooth, cellular, audio, camera, GPS, sensors, SEP/Face ID or GPU acceleration. Pixel power/volume input is not ported. Battery and several Apple platform/security services use bring-up stand-ins. The A78 and X1 cores are not enabled in the successful image. App navigation and daily-use behavior have not been fully assessed.
 
-## How it boots
+## How the port boots
 
-```
-ABL (stock Xiaomi bootloader, unlocked)
-  -> fastboot boot shim-boot.img              (temporary; nothing is flashed to boot)
-     -> shim: own MMU setup, reads the live FDT, loads the payload from the ramdisk
-        -> XNU Mach-O + generated Apple Device Tree (ADT) + boot-args
-           -> XNU -> UFS driver -> HFS+ root in the userdata partition
-              -> dyld + shared cache -> launchd -> daemons -> backboardd + SpringBoard
+```text
+Pixel bootloader, unlocked
+  -> fastboot boot: Android v4 boot image, legacy LZ4
+     -> shim: live FDT from installed vendor_boot, framebuffer fix, watchdog stop
+        -> embedded payload: plain arm64 XNU Mach-O + Apple Device Tree + boot args
+           -> GS101 UFS -> journaled HFSX root in userdata
+              -> dyld/shared cache -> launchd -> backboardd + SpringBoard
+                 -> FTM5 events -> iOS HID digitizer
 ```
 
-There is no serial port (the debug UART is wired as SPI on this board). The kernel draws its console into the framebuffer that ABL leaves at `0x9c000000`, and keeps a persistent 4 MiB log ring at the end of `userdata`. You read that log from OrangeFox recovery with `tools/sweet-log-pull.sh`, so you don't have to film the screen.
+The shim applies the Bluejay framebuffer workaround: a 32-bit write of **`0x3061` to `0x1c300030`**. The framebuffer is at `0xfac00000`, with a 4320-byte stride.
 
-## How to do it yourself
+The generated Apple Device Tree presents the iPhone X identity (`iPhone10,3` / `D22AP`) while supplying Pixel MMIO and CPU properties. `/chosen/mac-address-wifi0` provides a stable locally administered identity: without it, MobileGestalt waits for an unavailable network controller and LaunchServices never finishes seeding its database. This property supplies identity only; Wi-Fi still has no driver.
 
-You need a Redmi Note 10 Pro (`sweet`, global or Indian variant, SM7150) with an **unlocked bootloader**, a Linux PC, and a GitHub account for the kernel build. This is the exact path used for the screenshots above; other variants or firmware may need changes. **Everything on `userdata` is lost.** Bootloaders, recovery, modem and persist partitions are never touched.
+Touch power uses the firmware's **ACPM mailbox protocol**, including channel lookup by ID, validated 32-bit SRAM descriptors, queue bounds, sequence matching, barriers and PMIC status/readback checks. LDO25 and LDO26 supply 1.8 V and 3.3 V. The driver requests AP ownership and waits for the AOC grant before touching SPI, validates the FTM5 chip identity and SPI4 mode, then drains complete eight-byte FIFO events into `SweetHID`.
 
-### 0. Back up the phone
+## Boot the saved installation
 
-Boot OrangeFox (or any recovery with adb root) temporarily and pull at least `persist`, `modemst1`, `modemst2`, `fsg`, `fsc` and `boot`, `dtbo`, `vbmeta`. They contain per-device calibration data. Keep them off git; `.gitignore` already excludes `backup/`, `dtb/` and `recovery/`.
+Use Android platform-tools on Windows or Linux. The successful boot image is:
 
-The shim needs the stock DTB. Unpack your phone's stock `boot.img`:
+```text
+bluejay-xnu-0085-ios-v1-touch.img
+```
+
+With Bluejay in fastboot and the iOS root already installed:
 
 ```sh
-python3 tools/unpack_bootv2.py backup/boot.img dtb/boot_unpacked   # -> dtb/boot_unpacked/dtb
+fastboot getvar product             # must report bluejay
+fastboot boot bluejay-xnu-0085-ios-v1-touch.img
 ```
 
-### 1. Build the kernel
+The boot is temporary. On restart, use `fastboot boot` again to return to iOS. A halted diagnostic screen needs a manual restart because automatic reset is disabled.
 
-The kernel builds on GitHub's macOS runners with [blacktop/darwin-xnu-build](https://github.com/blacktop/darwin-xnu-build). The workflow fetches xnu-8796, applies `xnu/patches/` in order, and also stages the pinned open-source libpthread, HFS and BearSSL sources it needs. Fork the repo (public repos get free macOS minutes) and run:
+The rootfs backup is **`ios16-bluejay-v1.simg`**, an Android sparse image that expands to a 16 GiB journaled HFSX volume. The existing installation does not need to be flashed again. To intentionally restore that root on the same verified layout, the command used successfully was:
 
 ```sh
-gh workflow run xnu.yml -R YOU/ios-sweet
-gh run download RUN_ID -R YOU/ios-sweet -n xnu-kernel -D xnu/out
+fastboot -S 128M flash userdata ios16-bluejay-v1.simg
 ```
 
-To check a patch locally before spending a CI run, `tools/xnu-cc.py` replays the compile commands of a previous CI log for single files.
+Restoring replaces `userdata`. Preserve **`win`, `esp`, GPT, boot/recovery, modem, persist and calibration partitions**. This port's `userdata` bounds are based on the verified device layout; inspect a different device's GPT before installing. Keep partition backups outside git.
 
-### 2. Build the iOS root image
+## Build the kernel and boot image
 
-Download the iPhone X (iPhone10,3) iOS 16.7.16 (20H392) IPSW from Apple. Then, on Linux, with `apfs-fuse`, `hfsprogs` and sudo:
+Linux work was done in WSL **Ubuntu**. XNU needs a macOS toolchain, so the kernel is built through GitHub Actions. The tested run used `macos-14` and **Xcode 15.0.1**; its `iig` matches the XNU 8796 IORPC ABI. Xcode 16's generated ABI is incompatible with this source. Runner availability may require revisiting the toolchain later.
+
+Fork this repository for your own CI. Dispatch the `BLUEJAY` configuration and download its artifact:
 
 ```sh
-# OS, SystemOS and AppOS disk images from the IPSW (see BuildManifest.plist for their names)
-tools/mkiosroot.sh OS.dmg SystemOS.dmg AppOS.dmg ios16-root.img 16G
-sudo fsck.hfsplus -fy ios16-root.img
-sudo mount -t hfsplus -o loop,force ios16-root.img /mnt/iosroot
-sudo python3 tools/sweet-root-tweaks.py /mnt/iosroot
-sudo umount /mnt/iosroot
-img2simg ios16-root.img ios16-root.simg
+gh workflow run xnu.yml -R YOUR_ACCOUNT/ios-sweet --ref bluejay-port \
+    -f macos_version=13.5 -f kernel_config=DEVELOPMENT \
+    -f machine_config=BLUEJAY -f keep_going=true
+gh run download RUN_ID -R YOUR_ACCOUNT/ios-sweet \
+    -n xnu-kernel -D xnu/out-bluejay
+(cd xnu/out-bluejay && sha256sum -c SHA256SUMS)
 ```
 
-`mkiosroot.sh` copies the OS volume and both cryptexes into one case-sensitive journaled HFS+ volume. It adds the dyld cache links, the plain system keybag and the log directories the daemons expect. `sweet-root-tweaks.py` applies the bring-up changes: it skips Setup, seeds the activation state, removes the baseband daemon, disables the watchdogs that kill slow apps and the crash-looping media paths, and so on. The script's header explains each change.
+The workflow fetches [blacktop/darwin-xnu-build](https://github.com/blacktop/darwin-xnu-build) at a pinned commit, stages the pinned open-source dependencies and applies `xnu/patches/` in order. The output is **`kernel.development.bluejay`**, plain arm64 rather than arm64e.
 
-The device tree builder copies `/product` from the real iPhone X device tree, which MobileGestalt needs. Extract it once, without downloading the whole IPSW:
+Boot-image tools need Python 3, `aarch64-linux-gnu-gcc`, `lz4`, `mkbootimg`, GNU awk and cpio. Place the extracted iPhone X `d22ap.adt` at `research/ipsw-x/d22ap.adt` so the ADT builder can copy the real `/product` properties. The Apple device tree stays outside git.
+
+From the repository root:
 
 ```sh
-python3 tools/remotezip.py IPSW_URL DeviceTree.d22ap.im4p research/ipsw-x/dt
-ipsw img4 im4p extract research/ipsw-x/dt/Firmware/all_flash/DeviceTree.d22ap.im4p -o research/ipsw-x/d22ap.adt
+mkdir -p shim/out/bluejay
+python3 tools/mkbluejayadt.py shim/out/bluejay/bluejay.adt
+BOOT_ARGS='debug=0xc serial=3 cpus=4 keepsyms=1 -enable_kprintf_spam -noprogress rd=ufsroot0 unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 launchd_unsecure_cache=1 wdt=-1 ufslogsecs=2 sweetsample=lsd,installd,installcoordinationd,containermanagerd,mobileactivationd,SpringBoard,backboardd,logd,amfid sweetnull=lsd,installd,installcoordinationd,containermanagerd,mobileactivationd,SpringBoard,backboardd,logd,amfid sweetfb_noconsole=1'
+python3 tools/mkpayload.py xnu/out-bluejay/kernel.development.bluejay \
+    shim/out/bluejay/bluejay.adt shim/out/bluejay/payload-bluejay.bin --cmdline "$BOOT_ARGS"
+shim/build-bluejay.sh out/bluejay/payload-bluejay.bin
+# Output: shim/out/bluejay/boot.img
 ```
 
-### 3. Build the boot image
+`build-bluejay.sh` verifies the v4 header, legacy LZ4 roundtrip and ARM64 Image size. The successful image used the boot arguments above and kept both debug channels and the two-second persistent-log flush enabled.
 
-Needs `aarch64-linux-gnu-gcc` and `mkbootimg`.
-
-```sh
-python3 tools/mkadt.py shim/out/sweet.adt --highmem
-python3 tools/mkpayload.py xnu/out/kernel.development.sweet shim/out/sweet.adt shim/out/payload.bin \
-    --cmdline 'debug=0xc serial=3 cpus=6 keepsyms=1 -enable_kprintf_spam -noprogress rd=ufsroot0 unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 launchd_unsecure_cache=1 wdt=-1 sweetfb_noconsole=1 sweetfb_hz=30'
-shim/build.sh ../shim/out/payload.bin      # -> shim/out/shim-boot.img
-```
-
-What the less obvious boot-args do:
-
-| Boot-arg | Effect |
+| Boot argument | Purpose |
 | --- | --- |
-| `rd=ufsroot0 ufsrw=1 rootrw=1` | Root on the `userdata` partition, writable |
-| `cpus=6` | Start the six A55 cores; `cpus=1` is the safe fallback |
-| `launchd_unsecure_cache=1` | launchd accepts its job cache without AMFI |
-| `wdt=-1 wdt_test=no_user_checkin` | No hardware watchdog |
-| `sweetfb_noconsole=1` | Stop drawing kernel text over the GUI. It still goes to the persistent log; panics are drawn |
-| `sweetfb_hz=30` | Panel refresh rate of the CPU copy |
-| `sweettouch=0`, `sweetkeys=0` | Disable the touch or button driver |
+| `cpus=4` | Use the four A55 cores |
+| `rd=ufsroot0 ufsrw=1 rootrw=1` | Writable iOS root in `userdata` |
+| `debug=0xc serial=3 -enable_kprintf_spam` | Keep kernel debug output enabled |
+| `sweetfb_noconsole=1` | Hide framebuffer text after GUI swaps while retaining logs |
+| `ufslogsecs=2` | Periodically flush the persistent log |
+| `sweetsample=... sweetnull=...` | Retain focused userspace stack samples and daemon output |
+| `wdt=-1 wdt_test=no_user_checkin` | Disable XNU watchdog check-in policy; the shim separately stops the physical GS101 watchdogs |
 
-### 4. Flash the root and boot
+Touch and raw touch debug default to enabled. The tested image contains no argument disabling either.
+
+## Root filesystem
+
+The tested root was assembled from the **iPhone10,3/iPhone10,6 iOS 16.7.16 (20H392) IPSW**, combining OS, SystemOS and AppOS. It preserves numeric owners, modes, symlinks and hardlinks, exposes the cryptex libraries/shared cache, applies `sweet-root-tweaks.py`, and seeds Bluejay's ByHost migration preferences.
+
+`tools/mkiosroot.sh` contains the common root assembly steps. `tools/hfs-root-build.py` contains the guest-side builder/finalizer used for Bluejay, including its migration identity and launch-critical file manifest. The guest needs the three read-only APFS trees at `/mnt/{os,sysos,appos}/root`, repository tools at `/mnt/tools`, and a separate blank image device for HFS construction. See [`NOTES.md`](NOTES.md) for the actual construction and verification record.
+
+The immutable 16 GiB master passed the Apple HFS checker and a complete SHA256 readback after installation. On this host, the packaged Ubuntu checker returned an inconsistent primary-header error; rebuilding the recorded Apple source with the distro patches produced a successful full check. Source, checker and manifest hashes are recorded in the engineering notes. An existing verified root should be reused.
+
+Apple firmware and the assembled iOS root stay in the user's local files and are not distributed through this repository.
+
+## Debugging and validation
+
+The persistent ring occupies the last **1025 × 4096-byte blocks of `userdata`**, outside the 16 GiB HFSX volume. After manually returning to a root-capable recovery, read it with:
 
 ```sh
-fastboot -S 512M flash userdata ios16-root.simg   # ~7 minutes; do not unplug
-# Xiaomi's fastboot often hangs after a large flash: re-enter fastboot with Power + Volume down
-fastboot boot shim/out/shim-boot.img
+mkdir -p research/logs
+tools/sweet-log-pull.sh research/logs/boot-bluejay.txt
 ```
 
-The first boot takes about 4–5 minutes on the Apple logo, then the lock screen appears. Swipe up to unlock. To get back to fastboot, hold Power + Volume down.
+The log includes `BLUEJAY UFS`, `BLUEJAY ACPM`, `BLUEJAY TOUCH` and `SWEET HID` diagnostics. GUI console suppression changes drawing only; both normal console and direct `kprintf` output remain in the log, and panic drawing is retained. The final successful touch boot was left running at the user's request, so its recovery log has not been retrieved.
 
-### 5. Read the kernel log
+Before the hardware test, all four changed translation units compiled locally to arm64 Mach-O. The actual touch-driver host harness passed **55 checks under AddressSanitizer and UBSan**, covering ACPM queue validation, sequence wrap/stale replies, PMIC failures, GPIO preservation, denied AOC ownership and contact handling. CI source files matched those tested inputs, and the full macOS kernel build passed.
 
 ```sh
-fastboot boot recovery/recovery.img        # OrangeFox, temporary
-tools/sweet-log-pull.sh logs/boot.txt      # 4 MiB console ring from the end of userdata
-adb reboot bootloader
+python3 tools/validate-repo.py
+# After downloading/extracting the xnu-buildtree artifact:
+python3 tools/check-bluejay-touch.py PATH_TO_PATCHED_XNU
 ```
 
-The log contains crash reports with backtraces (`CRASH name ...`), IOKit traces of backboardd and SpringBoard, and the drivers' `SWEET ...` lines. `tools/sweet-crash.py` symbolicates them against the shared cache.
+`tools/xnu-cc.py` replays prior CI compile commands for local checks. QEMU helpers remain available for inherited kernel behavior; they do not emulate GS101 UFS, ACPM, FTM5 or the Pixel panel.
 
-### QEMU
+## Known successful artifacts
 
-`tools/qemu-sweet.py` boots the same kernel on QEMU `virt` with a test RAM-disk root. It is useful for kernel-only changes; see `NOTES.md`.
+[GitHub Actions run 39795615846, attempt 2](https://github.com/dristotle/ios-sweet/actions/runs/39795615846/attempts/2) built commit **`a61bc40858d544c520c4e9cf357dadc22dbdda0a`**. The user confirmed touch and removal of the console overlay on its first temporary boot.
 
-## Repository layout
-
-| Path | What |
+| Artifact | SHA256 |
 | --- | --- |
-| `shim/` | Bare-metal boot shim (C + asm) packed as an Android boot.img v2 |
-| `xnu/patches/` | The XNU patch series (applied in order by CI), plus staging scripts for libpthread, HFS and BearSSL |
-| `.github/workflows/xnu.yml` | Kernel CI build |
-| `tools/mkadt.py` | Generates the Apple Device Tree from sweet's MMIO layout and the iPhone X identity |
-| `tools/mkpayload.py` | Packs kernel + ADT + boot-args into the shim payload |
-| `tools/mkiosroot.sh` | Builds the HFS+ iOS root from the IPSW images |
-| `tools/sweet-root-tweaks.py` | Bring-up changes to the root (Setup skip, activation, daemons) |
-| `tools/sweet-log-pull.sh`, `sweet-log.py` | Read the persistent kernel log from recovery |
-| `tools/sweet-crash.py` | Symbolicate console crash reports |
-| `tools/xnu-cc.py` | Local single-file compile check from a CI log |
-| `tools/qemu-sweet.py` | QEMU test boots with framebuffer text decoding |
-| `tools/adt.py`, `remotezip.py`, `unpack_bootv2.py`, `sparsediff.py` | Helpers |
-| `NOTES.md` | Detailed engineering log: every boot, crash and decision, plus hardware facts |
+| `bluejay-xnu-0085-ios-v1-touch.img` | `ba415f83a8b5b4bf3a2fcea2d965bc9ce9c21a2f5d21075c74f805bd8ab34e09` |
+| `ios16-bluejay-v1.simg` | `f93a24b968c392f90d888ab5eef5ab1a479a41b8a7dd366abeced35b71df8040` |
+| Expanded 16 GiB root image | `f34aaadd00d92a2a3a3d3bb4d403671c895b8b648e4dc30c5581b85ffc1096fb` |
+| `kernel.development.bluejay` | `85829ecccf0b6d7533c003223010cce409aee7b7f2a7534334c441558e39b05f` |
 
-Not in git: partition backups, live device trees, recovery images, Apple firmware and root images, and downloaded or generated build trees. They contain device serials and calibration data, or Apple's copyrighted files.
+## Source layout and credits
 
-## Kernel patches
-
-| # | What |
+| Path | Purpose |
 | --- | --- |
-| 0001–0009 | Toolchain compatibility, SWEET machine config, non-PAC arm64, stubs for Apple-internal pieces |
-| 0010–0018 | Early framebuffer console, physmap fix, PRNG without corecrypto, device-tree platform expert, timer PPI, boot CPU driver |
-| 0019–0020 | Apple open-source libpthread kernel provider; BearSSL AES |
-| 0021–0027 | RAM-disk root, mockfs, SHA-256, minimal AMFI, Apple open-source HFS+, MD5 |
-| 0028–0034 | UFS host driver and root device, read/write root, DMA above 4 GiB |
-| 0035–0045 | Entitlements, bindfs, AppleKeyStore stub, IOWatchdog, console crash reports |
-| 0046 | IOSurface (IOCoreSurfaceRoot) and IOMobileFramebuffer (AppleCLCD) services |
-| 0047–0055 | Diagnostics: persistent log, /dev/null tee, IOKit trace, heap strings and user stack sampler on crash; permissive Sandbox policy; HFS rename-swap; AppleKeyStore selectors |
-| 0056–0057 | Throttled panel copy; no external identity resolver |
-| 0058 | HID event services. Apple's IOHIDFamily-1915.140.3 user client and event queue, matching the iOS 16.7 userland |
-| 0059 | iPhone X identity (`hw.product` / `hw.target` from the device tree) |
-| 0060 | Power and volume keys over SPMI; touch over GENI I²C |
-| 0061 | Present the display as 1125×2436 |
-| 0062 | RPMh regulator vote for the touch rail; battery power source |
-| 0063 | GENI FIFO packing fix and the Goodix GT9896 protocol |
-| 0064 | Grant PRIV_WORK_INTERVAL (UIKit's CoreAnimation work interval) |
-| 0065 | SMP: secondary A55 cores via PSCI CPU_ON |
-| 0066–0067 | Fault-region crash info; console mute |
-| 0068 | IOSurface lookup semantics for already-mapped surfaces |
-| 0069 | Batched persistent-log flushes |
+| `shim/` | Boot shim, GS101 watchdog stop and framebuffer workaround; `build-bluejay.sh` packs header v4 |
+| `xnu/patches/0001–0081` | Inherited XNU/iOS platform work; SWEET hardware drivers are guarded on Bluejay |
+| `xnu/patches/0082–0083` | GS101 platform/UFS port and inherited build flags |
+| `xnu/patches/0084` | FTM5, ACPM PMIC power, AP/AOC handshake and HID input |
+| `xnu/patches/0085` | Persist direct `kprintf` while hiding text over the GUI |
+| `tools/mkbluejayadt.py`, `mkpayload.py` | Pixel Apple Device Tree and kernel payload |
+| `tools/hfs-root-build.py`, `sweet-root-tweaks.py` | Root assembly and bring-up configuration |
+| `tools/check-bluejay-boot.py`, `check-bluejay-touch.py` | Boot-format and actual-driver checks |
+| `NOTES.md` | Detailed bring-up record, evidence and hardware facts |
 
-## Key hardware facts
+Thanks to the original [ios-sweet](https://github.com/dipa-studio/ios-sweet) project; Apple's open-source XNU, IOHIDFamily, libpthread and HFS; [BearSSL](https://bearssl.org); [darwin-xnu-build](https://github.com/blacktop/darwin-xnu-build); [ipsw](https://github.com/blacktop/ipsw); and Google's published GS101 and touch sources. The user's Bluejay UFS and Windows touch drivers supplied the hardware starting points.
 
-- RAM: payloads use the upper bank, `0x100000000` + `0xfcc00000` (about 3.95 GiB), above Qualcomm's protected carve-outs.
-- GICv3 with security extensions: the timer goes through Group 1 IRQ (virtual timer INTID 19), not FIQ as on Apple silicon.
-- PSCI through `smc`, 19.2 MHz timer, ARMv8.2 without pointer authentication. MPIDR uses Aff1 for the core number.
-- Panel: 1080×2400 DSC video mode, continuous splash from ABL, no refresh kick needed.
-- Touch: Goodix GT9896 at I²C `0x5d` on QUP SE7 (`0xa84000`), powered by PM6150L LDO11 through RPMh.
-- Buttons: power and volume down on the PM6150 PON block, volume up on PM6150L GPIO2 (SPMI SID 4).
-
-More in [`NOTES.md`](NOTES.md).
-
-## Credits
-
-Built on Apple's open-source releases (xnu, IOHIDFamily, libpthread, hfs), [BearSSL](https://bearssl.org), [blacktop/darwin-xnu-build](https://github.com/blacktop/darwin-xnu-build), [ipsw](https://github.com/blacktop/ipsw), Qualcomm/Xiaomi's published Linux kernel sources for the hardware details, and [OrangeFox Recovery](https://orangefox.download). iOS itself is Apple's and is not distributed here.
+The touch protocol was checked against pinned Google commits: GS101 SoC **`5c48566f5564edbe69c2ea7c0b1dda9ce96a8816`**, FTS **`18f44fca40156b5acf95c0361421dce34bfcc654`**, and touch-common **`5b37ddff6b9e06e40cec2c094ec4d64882b222bc`**. Existing upstream licenses and source notices remain in place.

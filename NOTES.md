@@ -1,4 +1,4 @@
-## Active bluejay port — 2026-10-21
+## Completed bluejay port — 2026-10-22
 
 This section supersedes upstream sweet observations below. Objective: boot
 real iPhone X iOS 16.7.16 (20H392) userland and XNU on Pixel 6a bluejay.
@@ -6,7 +6,45 @@ Real BLUEJAY XNU boots the installed HFSX root and runs Apple launchd,
 backboardd and other iOS daemons on four A55 cores. Disabling the inherited
 GS101 watchdogs and shim resets lets it run >9minutes. Providing the missing
 MobileGestalt Wi-Fi identity now lets real SpringBoard reach the iOS lock
-screen. Touch and home-screen interaction remain unverified.
+screen. User now confirms touchscreen interaction works with patch0084
+and framebuffer console text disappears with patch0085 while debug logs
+remain enabled. The phone is still running iOS; leave it running.
+
+**Goal achieved and confirmed by user, 22 October 2026.** Final cleanup and
+delivery requested: rewrite README, save boot/rootfs in the Documents iOS
+folder, and remove generated leftovers. All three are complete. Phone left
+running iOS; no additional device reboot, flash or partition writes.
+
+Final release directory:
+`C:/Users/Catto/Documents/stuff for android/bluegay shit/iOS`
+
+- `bluejay-xnu-0085-ios-v1-touch.img`: successful header4/legacy-LZ4 boot.
+- `ios16-bluejay-v1.simg`: original verified flashable HFSX root backup.
+  Moved from Windows ios-bluejay-artifacts (same C: volume, no extra12GiB
+  allocation). SHA256 readback of both destination images MATCHES below.
+  Sparse f93a24b968c392f90d888ab5eef5ab1a479a41b8a7dd366abeced35b71df8040;
+  boot ba415f83a8b5b4bf3a2fcea2d965bc9ce9c21a2f5d21075c74f805bd8ab34e09.
+- README.md, PROJECT-README.md, SHA256SUMS, release-manifest.json and root
+  construction/fsck/install manifests included. These are installation
+  images, not a snapshot of changes made while the user was using iOS.
+- Project README.md and xnu/README.md rewritten for verified Bluejay behavior,
+  build commands, ACPM/AP-AOC touch, debug retention and protected partitions.
+- Cleaned56 WSL generated paths (1,479,540,736 allocated bytes) and16 Windows
+  generated files (49,918,595 bytes). Old CI trees/patch fixtures/objects,
+  QEMU root-construction guest outputs and superseded boot images removed.
+  All three read-only Apple source mounts released and helper daemons stopped.
+  Master research/ios16-bluejay-v1.img, successful0085 kernel/buildtree/log,
+  source patches, original user UFS/touch drivers, device backups and logs
+  retained. Apple DMG extracts retained: original IPSW is no longer present
+  at its former Downloads path; cleanup did not remove that IPSW.
+- Cleanup evidence Windows ios-bluejay-artifacts/cleanup-bluejay-wsl.json
+  and cleanup-bluejay-windows.json. Future local compile baseline is now
+  research/ci0085 + research/bluejay-ci-0085.log;ci0082-2 was superseded.
+- Repository validation PASS85 patches/20 Python tools/8 shell scripts;
+  git diff--check PASS. Final docs and success evidence committed and pushed
+  ONLY to dristotle/ios-sweet bluejay-port. No upstream merge/push.
+- No work remains for the achieved boot/touch goal. Optional future log pull
+  only after user chooses to return to recovery;do not disturb this iOS run.
 
 - Checkout `/home/catto/ios-bluejay`, branch `bluejay-port`, upstream 425b251.
   Build fork `dristotle/ios-sweet`, authenticated as dristotle.
@@ -328,6 +366,42 @@ screen. Touch and home-screen interaction remain unverified.
   implementation already locally validated. No new phone boot or storage
   writes. After successful CI,use prepare-bluejay-touch-image.py then
   boot-bluejay-ios-touch.py;root must not be recopied/reformatted/reflashed.
+- **0085 touch CI passed and first temporary hardware boot accepted:**
+  Fork run39795615846 attempt2 SUCCESS,2026-10-22 14:50:17UTC;
+  source a61bc40,0084 ACPM/FTM5+0085 persistent kprintf.
+  Kernel xnu/out-bluejay-0085/kernel.development.bluejay,plain arm64 PIE,
+  SHA256 85829ecccf0b6d7533c003223010cce409aee7b7f2a7534334c441558e39b05f.
+  Artifact SHA256SUMS PASS;all4 touch/UFS/HID/kprintf sources byte-match
+  locally tested inputs. Required touch/HID/log symbols present.
+  Tree research/ci0085,archive research/ci0085-artifacts/buildtree.tgz;
+  CI log research/bluejay-ci-0085.log. Build completed with Xcode15.0.1.
+  Temp image Windows ios-bluejay-artifacts/bluejay-xnu-0085-ios-v1-touch.img,
+  bytes7090176,SHA256 ba415f83a8b5b4bf3a2fcea2d965bc9ce9c21a2f5d21075c74f805bd8ab34e09.
+  Header4+legacy-LZ4/Image roundtrip PASS;native Windows hash MATCH.
+  Known GUI ADT/boot args byte-identical;debug/persistent/raw touch logging
+  enabled;GUI text suppressed after display swap;watchdogs/reset disabled.
+  fastboot boot accepted 2026-10-22T14:55:04.822058+00:00,send0.204s/boot0.006s/
+  total0.221s. Phone was verified bluejay recovery before temporary boot.
+  No partition flashes or root reinstall. Bootloader acceptance only:
+  physical iOS/touch behavior not observed yet. User asked to test swipe/tap
+  and GUI text,then return to recovery. Leave this test running until reply.
+  Next:pull-bluejay-xnu-log.py boot-0085-ios-v1-touch;inspect BLUEJAY ACPM,
+  BLUEJAY TOUCH,SWEET HID and user observation before changing the driver.
+- **Touch and clean iOS display physically confirmed, 2026-10-22:**
+  User reports "Touchscreen works!!" on the first0085 touch boot,then
+  "Text is gone; still using iOS". This confirms the real FTM5 input path
+  and patch0085 framebuffer suppression on hardware. Do not reboot again
+  or request recovery while the user is using this successful iOS boot.
+  Successful image/kernel/CI hashes recorded above;implementation a61bc40
+  contains0084 ACPM PMIC protocol,AP/AOC handshake,multicontact decoder and
+  0085 persistent direct kprintf output. Raw touch and debug logs stay enabled.
+  Source/test patches are committed only to dristotle/ios-sweet bluejay-port.
+  No new partition flash or root reinstall. Windows boot manifest and saved
+  image provide the exact successful artifact for future temporary boots.
+  Saved ACPM/FIFO log retrieval is optional follow-up when the user later
+  returns to recovery:pull-bluejay-xnu-log.py boot-0085-ios-v1-touch.
+  Swipe/tap was requested;the reply confirms touch generally. Specific
+  multitouch/long-run behavior has not been separately described by user.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
