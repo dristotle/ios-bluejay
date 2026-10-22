@@ -4,8 +4,9 @@ This section supersedes upstream sweet observations below. Objective: boot
 real iPhone X iOS 16.7.16 (20H392) userland and XNU on Pixel 6a bluejay.
 Real BLUEJAY XNU boots the installed HFSX root and runs Apple launchd,
 backboardd and other iOS daemons on four A55 cores. Disabling the inherited
-GS101 watchdogs and shim resets lets it run >9minutes and display the Apple
-logo. SpringBoard remains blocked in startup; home screen unverified.
+GS101 watchdogs and shim resets lets it run >9minutes. Providing the missing
+MobileGestalt Wi-Fi identity now lets real SpringBoard reach the iOS lock
+screen. Touch and home-screen interaction remain unverified.
 
 - Checkout `/home/catto/ios-bluejay`, branch `bluejay-port`, upstream 425b251.
   Build fork `dristotle/ios-sweet`, authenticated as dristotle.
@@ -230,6 +231,40 @@ logo. SpringBoard remains blocked in startup; home screen unverified.
   total0.223s. No partition flashes; installed iOS root not recopied or
   modified from recovery. User asked to observe >=3minutes then return to
   recovery and report screen. Home screen outcome remains pending.
+- **Real iOS lock screen verified, 2026-10-22:**
+  User reports "IT BOOTED!" and photo
+  C:/Users/Catto/Downloads/AyuGram Desktop/photo_2026-10-22_15-38-38.jpg
+  shows the real iOS clock, camera shortcut and swipe bar, with framebuffer
+  console text overlaid. Successful temporary image0083-ios-v1-mac above;
+  commit0ffd6e9 pushed ONLY to dristotle/ios-sweet, branch bluejay-port.
+  Saved log boot-0083-ios-v1-mac:220119bytes,flush79,samples0/1,
+  shared-cache slide0x34a34000. lsd reaches its normal server runloop;
+  installd executes; SpringBoard reaches SBSystemAppMain/UIKit runloop.
+  SpringBoard/backboardd exec once, recorded crashes0; swaps reach30.
+  This supersedes the pending outcome above; home interaction not tested.
+- **Bluejay touch port started, 2026-10-22:**
+  User reference C:/Users/Catto/.gemini/antigravity/scratch/touch_driver:
+  BluejayTouch.c bit-bangs GPIO SPI and powers LDO25/26 through ACPM;
+  Windows VHF plumbing will use existing sweet_hid_touch digitizer events.
+  Recovery DT confirms FTM5 chip36:48,1080x2400,spi11.0,GPIO10c40000
+  gpp23 pins0/1/2/3 CLK/MOSI/MISO/CS,gpp26 pins0/1 reset/AP-to-AOC,
+  IRQ174d0000 gpa9 pin0 active-low. Recovery AP-to-AOC is low.
+  Official pinned Google reference sources saved under research/bluejay-touch
+  (FTS18f44fca40156b5acf95c0361421dce34bfcc654,
+  SoC5c48566f5564edbe69c2ea7c0b1dda9ce96a8816).
+  ACPM SRAM02039000+40000,initdataa000,mailbox17610000,channel ID2;
+  TX doorbell INTGR1/40 bit2,RX acknowledgment INTCR0/24 bit2.
+  Must validate firmware queue offsets/lengths,find channel by ID,match
+  nonzero1..63 sequences,check PMIC status bits24..31 and use barriers.
+  S2MPG10 type1/channel0; rails registers5c/5d,valuesec/fc.
+  FTM5 SPI FIFO87 requires dummy+8 data bytes,ID high nibble of event1;
+  enter/move/leave13/23/33. Do not copy first-contact-only Windows polling.
+  No driver implementation or touch hardware boot yet. Phone in recovery.
+  Prepared same-kernel GUI image0083-ios-v1-gui NOT booted:sha256
+  b44d0c1e634ffdc08bf3de06d30f3f2d82014550118bcdf06120d9a2161884fa.
+  sweetfb_noconsole=1 suppresses only framebuffer text after display swaps.
+  User explicitly requests debug logs remain enabled:retain persistent log,
+  debug=0xc,serial=3 and -enable_kprintf_spam in all touch test images.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
