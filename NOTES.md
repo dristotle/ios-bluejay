@@ -265,6 +265,29 @@ screen. Touch and home-screen interaction remain unverified.
   sweetfb_noconsole=1 suppresses only framebuffer text after display swaps.
   User explicitly requests debug logs remain enabled:retain persistent log,
   debug=0xc,serial=3 and -enable_kprintf_spam in all touch test images.
+- **Patch0084 Bluejay ACPM/FTM5 implementation locally validated:**
+  New bsd/dev/bluejay_touch.c in patch0084;separate Bluejay initialization from
+  sweet_ufs after persistent log start. Qualcomm key/touch/USB stays guarded.
+  32-bit firmware ABI72byte descriptors,ID2 lookup,non-SACPM queue validation,
+  SRAM alignment/range/overlap checks,reserve2/full checks,barriers,nonzero
+  sequence1..63,matched responses and firmware return status,bounded waits.
+  LDO25/26 are read,programmed only if needed,then readback-verifiedec/fc.
+  Google common5b37ddff6b9e06e40cec2c094ec4d64882b222bc confirms AP ownership
+  active-low requestgpp26-1 and AOC grantgpa8-6 at174e0000+40 (FAR_ALIVE).
+  No SPI until grant;GPIO pull fields are4bits per pin. FTM5 exact chip36:48
+  required;mode3 then mode0 fallback,Windows reset/SPI4 sequence retained.
+  FIFO87 dummy+complete8byte events;remaining count inevent7 low5bits drains
+  up to32;10IDs,enter/move/leave,coordinates,releases and reset/error release.
+  Waits for HID registration. Touch debug/raw FIFO and10s heartbeat enabled.
+  Local clang21 arm64 Mach-O objects for new driver,sweet_ufs andSweetHID
+  compile0/3 failures. Actual driver host harness55 checks PASS withASan/UBSan
+  (malformed/overlapping descriptors,index1 ID2,sequence wrap/stale/timeout,
+  firmware error,queue full,reserve2,rail readback,two contacts,palm/reset/up,
+  AP/AOC timeout and GPIO field preservation). tools/check-bluejay-touch.py
+  can rerun against a patched XNU directory;outputs remain under research.
+  Isolated git apply--check/apply produces all4 compiled input files MATCH.
+  Debug/persistent logging remains enabled;next build+temp boot with
+  sweetfb_noconsole=1 so logs do not cover SpringBoard. Hardware untested.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each

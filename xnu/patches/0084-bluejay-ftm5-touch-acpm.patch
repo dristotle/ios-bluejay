@@ -1,0 +1,808 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -108,6 +108,7 @@
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
++bsd/dev/bluejay_touch.c			standard
+ bsd/dev/sweet_rpmh.c			standard
+ bsd/dev/sweet_spmi.c			standard
+ bsd/dev/sweet_usb.c			standard
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -52,6 +52,9 @@
+ extern void sweet_sample_start(void);
+ extern void sweet_keys_init(void);
+ extern void sweet_touch_init(void);
++#if defined(BLUEJAY)
++extern void bluejay_touch_init(void);
++#endif
+ extern void sweet_usb_probe(void);
+ 
+ #define REG_CAP         0x00
+@@ -811,7 +814,9 @@
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+-#if !defined(BLUEJAY)
++#if defined(BLUEJAY)
++	bluejay_touch_init();
++#else
+ 	sweet_keys_init();
+ 	sweet_touch_init();
+ 	sweet_usb_probe();
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -559,3 +559,10 @@
+ 		gSweetTouch->touch(finger, down != 0, x, y);
+ 	}
+ }
++
++/* The hardware polling thread waits for registration before consuming events. */
++extern "C" int
++sweet_hid_touch_ready(void)
++{
++	return gSweetTouch != nullptr;
++}
+diff --git a/bsd/dev/bluejay_touch.c b/bsd/dev/bluejay_touch.c
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/bluejay_touch.c
+@@ -0,0 +1,754 @@
++/*
++ * Bluejay (GS101) ST FTM5 touchscreen, fed into SweetHID's iOS digitizer.
++ * Hardware sequence based on the user's BluejayTouch.c Windows driver.
++ * Firmware ABI checked against Google's gs/fts_touch/touch-common sources:
++ *   gs 5c48566f5564edbe69c2ea7c0b1dda9ce96a8816
++ *   fts_touch 18f44fca40156b5acf95c0361421dce34bfcc654
++ *   common 5b37ddff6b9e06e40cec2c094ec4d64882b222bc
++ * One kernel thread owns the PMIC channel and GPIO SPI. No direct Speedy
++ * access, firmware flash, calibration writes, or Qualcomm MMIO.
++ */
++#if defined(ARM64_BOARD_CONFIG_BLUEJAY)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/errno.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern kern_return_t thread_terminate(thread_t);
++extern void sweet_hid_touch(int finger, int down, int x, int y);
++extern int sweet_hid_touch_ready(void);
++void bluejay_touch_init(void);
++
++#define BT_GPP_PA       0x10c40000u
++#define BT_IRQ_PA       0x174d0000u
++#define BT_AOC_PA       0x174e0000u
++#define BT_SRAM_PA      0x02039000u
++#define BT_SRAM_SIZE    0x40000u
++#define BT_MBOX_PA      0x17610000u
++#define BT_INITDATA     0xa000u
++#define BT_PMIC_ID      2u
++#define BT_MBOX_ACK     0x24u
++#define BT_MBOX_MASK    0x28u
++#define BT_MBOX_STATUS  0x2cu
++#define BT_MBOX_SEND    0x40u
++#define BT_CON         0x00u
++#define BT_DAT         0x04u
++#define BT_PUD         0x08u
++#define BT_SPI_BANK    0x60u  /* gpp23: CLK0 MOSI1 MISO2 CS3 */
++#define BT_RESET_BANK  0xc0u  /* gpp26: reset0, AP->AOC1 */
++#define BT_IRQ_BANK    0xc0u  /* gpa9: IRQ0 (active low) */
++#define BT_AOC_BANK    0x40u  /* gpa8: AOC->AP6, low = AP owns bus */
++#define BT_CLK         (1u << 0)
++#define BT_MOSI        (1u << 1)
++#define BT_MISO        (1u << 2)
++#define BT_CS          (1u << 3)
++#define BT_CONTACTS    10u
++#define BT_EVENT_SIZE  8u
++#define BT_FIFO_DEPTH  32u
++
++/* Firmware uses 32-bit SRAM offsets, even though the AP is arm64. */
++struct bt_acpm_header {
++	uint32_t plugins, num_plugins, channels, num_channels;
++	uint32_t pid_framework, pid_max, ap_channels;
++};
++
++struct bt_acpm_channel {
++	uint32_t id, field, owner, type;
++	uint32_t rx_rear, rx_front, rx_base;
++	uint32_t rx_indirect, rx_indirect_base, rx_indirect_size;
++	uint32_t tx_rear, tx_front, tx_base;
++	uint32_t qlen, mlen, credit, mbox_addr, ap_poll;
++};
++_Static_assert(sizeof(struct bt_acpm_header) == 28, "ACPM initdata ABI");
++_Static_assert(sizeof(struct bt_acpm_channel) == 72, "ACPM channel ABI");
++_Static_assert(__builtin_offsetof(struct bt_acpm_channel, tx_rear) == 40,
++    "ACPM receive queue ABI");
++
++static struct {
++	vm_offset_t gpp, irq, aoc, sram, mbox;
++	struct bt_acpm_channel ch;
++	uint32_t seq, saved_mask, active;
++	uint32_t saved_spi[3], saved_reset[3], saved_irq[3];
++	uint32_t polls, events, reports, errors, skipped;
++	int x[BT_CONTACTS], y[BT_CONTACTS];
++	unsigned mode;
++	int debug;
++	bool started, pins_taken, acpm_open;
++} bt;
++static int bt_sleep_chan;
++
++static uint32_t
++bt_read(vm_offset_t base, uint32_t off)
++{
++	uint32_t value = *(volatile uint32_t *)(base + off);
++	__asm__ volatile("dmb oshld" ::: "memory");
++	return value;
++}
++
++static void
++bt_write(vm_offset_t base, uint32_t off, uint32_t value)
++{
++	__asm__ volatile("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(base + off) = value;
++	__asm__ volatile("dsb osh" ::: "memory");
++}
++
++static void
++bt_update(vm_offset_t base, uint32_t off, uint32_t mask, uint32_t value)
++{
++	bt_write(base, off, (bt_read(base, off) & ~mask) | (value & mask));
++}
++
++static void
++bt_wait(unsigned ms)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(&bt_sleep_chan, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++static bool
++bt_sram_range(uint32_t off, uint32_t size)
++{
++	return off != 0 && (off & 3u) == 0 && size != 0 &&
++	       (size & 3u) == 0 && off < BT_SRAM_SIZE && size <= BT_SRAM_SIZE - off;
++}
++
++static bool
++bt_overlap(uint32_t a, uint32_t alen, uint32_t b, uint32_t blen)
++{
++	return (uint64_t)a < (uint64_t)b + blen && (uint64_t)b < (uint64_t)a + alen;
++}
++
++static int
++bt_acpm_validate(const struct bt_acpm_channel *c, uint32_t descriptors,
++    uint32_t descriptor_bytes)
++{
++	if (c->id != BT_PMIC_ID || c->type != 1 || (c->field & (1u << 31)) ||
++	    c->qlen < 3 || c->qlen > 256 || c->mlen < 16 || c->mlen > 64 ||
++	    (c->mlen & 3u)) {
++		return EPROTO;
++	}
++	uint32_t bytes = c->qlen * c->mlen;
++	uint32_t offsets[] = { c->rx_rear, c->rx_front, c->tx_rear, c->tx_front,
++		              c->rx_base, c->tx_base };
++	uint32_t sizes[] = { 4, 4, 4, 4, bytes, bytes };
++	for (unsigned i = 0; i < 6; i++) {
++		if (!bt_sram_range(offsets[i], sizes[i]) ||
++		    bt_overlap(offsets[i], sizes[i], BT_INITDATA, sizeof(struct bt_acpm_header)) ||
++		    bt_overlap(offsets[i], sizes[i], descriptors, descriptor_bytes)) {
++			return EPROTO;
++		}
++		for (unsigned j = 0; j < i; j++) {
++			if (bt_overlap(offsets[i], sizes[i], offsets[j], sizes[j])) {
++				return EPROTO;
++			}
++		}
++	}
++	return 0;
++}
++
++/* AP transmit = firmware rx; AP receive = firmware tx. */
++static int
++bt_acpm_indices(uint32_t *txf, uint32_t *txr, uint32_t *rxf, uint32_t *rxr)
++{
++	*txf = bt_read(bt.sram, bt.ch.rx_front);
++	*txr = bt_read(bt.sram, bt.ch.rx_rear);
++	*rxf = bt_read(bt.sram, bt.ch.tx_front);
++	*rxr = bt_read(bt.sram, bt.ch.tx_rear);
++	return *txf < bt.ch.qlen && *txr < bt.ch.qlen &&
++	       *rxf < bt.ch.qlen && *rxr < bt.ch.qlen ? 0 : EPROTO;
++}
++
++static int
++bt_acpm_drain(uint32_t request, uint32_t *result, bool *matched)
++{
++	uint32_t txf, txr, front, rear;
++	*matched = false;
++	if (bt_acpm_indices(&txf, &txr, &front, &rear)) {
++		return EPROTO;
++	}
++	/* One bounded snapshot; new arrivals are picked up by the next poll. */
++	while (rear != front) {
++		uint32_t off = bt.ch.tx_base + rear * bt.ch.mlen;
++		uint32_t word0 = bt_read(bt.sram, off);
++		uint32_t word1 = bt_read(bt.sram, off + 4);
++		uint32_t seq = (word0 >> 16) & 0x3fu;
++		/* Firmware guarantees the sequence, not an echo of the PMIC address. */
++		if (request && seq == ((request >> 16) & 0x3fu)) {
++			*result = word1;
++			*matched = true;
++		} else {
++			bt.skipped++;
++			printf("BLUEJAY ACPM: stale/unmatched response seq=%u words=%#x/%#x\n",
++			    seq, word0, word1);
++		}
++		if (!request && seq) {
++			bt.seq = seq;
++		}
++		rear = (rear + 1) % bt.ch.qlen;
++		bt_write(bt.sram, bt.ch.tx_rear, rear);
++	}
++	/* Publish rear before W1C. Always check the queue again after ACK. */
++	bt_write(bt.mbox, BT_MBOX_ACK, 1u << BT_PMIC_ID);
++	return 0;
++}
++
++static int
++bt_acpm_open(void)
++{
++	bt.sram = ml_io_map(BT_SRAM_PA, BT_SRAM_SIZE);
++	bt.mbox = ml_io_map(BT_MBOX_PA, 0x1000);
++	if (!bt.sram || !bt.mbox) {
++		return ENOMEM;
++	}
++	struct bt_acpm_header h;
++	uint32_t *words = (uint32_t *)&h;
++	for (unsigned i = 0; i < sizeof(h) / 4; i++) {
++		words[i] = bt_read(bt.sram, BT_INITDATA + i * 4);
++	}
++	printf("BLUEJAY ACPM: channels=%u AP=%u descriptors=%#x\n",
++	    h.num_channels, h.ap_channels, h.channels);
++	if (!h.ap_channels || h.ap_channels > 64 || h.num_channels < h.ap_channels ||
++	    h.num_channels > 64 || !bt_sram_range(h.channels,
++	    h.ap_channels * sizeof(struct bt_acpm_channel))) {
++		return EPROTO;
++	}
++	bool found = false;
++	for (unsigned i = 0; i < h.ap_channels; i++) {
++		uint32_t off = h.channels + i * sizeof(struct bt_acpm_channel);
++		if (bt_read(bt.sram, off) == BT_PMIC_ID) {
++			if (found) {
++				return EPROTO;
++			}
++			words = (uint32_t *)&bt.ch;
++			for (unsigned j = 0; j < sizeof(bt.ch) / 4; j++) {
++				words[j] = bt_read(bt.sram, off + j * 4);
++			}
++			found = true;
++		}
++	}
++	if (!found || bt_acpm_validate(&bt.ch, h.channels,
++	    h.ap_channels * sizeof(struct bt_acpm_channel))) {
++		return EPROTO;
++	}
++	uint32_t txf, txr, rxf, rxr;
++	if (bt_acpm_indices(&txf, &txr, &rxf, &rxr)) {
++		return EPROTO;
++	}
++	printf("BLUEJAY ACPM: ID2 len=%u size=%u TX=%u/%u RX=%u/%u poll=%u\n",
++	    bt.ch.qlen, bt.ch.mlen, txf, txr, rxf, rxr, bt.ch.ap_poll);
++	/* Seed from the previous TX slot as well as any inherited response. */
++	uint32_t prev = (txf + bt.ch.qlen - 1) % bt.ch.qlen;
++	bt.seq = (bt_read(bt.sram, bt.ch.rx_base + prev * bt.ch.mlen) >> 16) & 0x3fu;
++	bt.saved_mask = bt_read(bt.mbox, BT_MBOX_MASK);
++	bt_update(bt.mbox, BT_MBOX_MASK, 1u << BT_PMIC_ID, 1u << BT_PMIC_ID);
++	bt.acpm_open = true;
++	uint32_t ignored;
++	bool matched;
++	return bt_acpm_drain(0, &ignored, &matched);
++}
++
++static void
++bt_acpm_close(void)
++{
++	if (bt.acpm_open) {
++		bt_update(bt.mbox, BT_MBOX_MASK, 1u << BT_PMIC_ID, bt.saved_mask);
++		bt.acpm_open = false;
++	}
++}
++
++static int
++bt_acpm_xfer(uint8_t func, uint8_t reg, uint8_t value, uint8_t *out)
++{
++	if (!bt.acpm_open || func > 1 || (reg != 0x5c && reg != 0x5d)) {
++		return EINVAL;
++	}
++	uint32_t ignored;
++	bool matched;
++	int err = bt_acpm_drain(0, &ignored, &matched);
++	if (err) {
++		return err;
++	}
++	uint32_t txf = 0, txr, rxf, rxr;
++	unsigned wait;
++	for (wait = 0; wait < 10000; wait++) {
++		if (bt_acpm_indices(&txf, &txr, &rxf, &rxr)) {
++			return EPROTO;
++		}
++		/* Google's transport reserves two slots, including response capacity. */
++		if ((txf + 1) % bt.ch.qlen != txr && (txf + 2) % bt.ch.qlen != rxf) {
++			break;
++		}
++		delay(10);
++	}
++	if (wait == 10000) {
++		printf("BLUEJAY ACPM: ID2 queue full, no request written\n");
++		return EBUSY;
++	}
++	bt.seq = bt.seq % 63 + 1;
++	uint32_t request = (bt.seq << 16) | (1u << 8) | reg; /* S2MPG10, Speedy0 */
++	uint32_t off = bt.ch.rx_base + txf * bt.ch.mlen;
++	for (unsigned i = 0; i < bt.ch.mlen; i += 4) {
++		uint32_t word = i == 0 ? request : i == 4 ? func | ((uint32_t)value << 8) : 0;
++		bt_write(bt.sram, off + i, word);
++	}
++	bt_write(bt.sram, bt.ch.rx_front, (txf + 1) % bt.ch.qlen);
++	bt_write(bt.mbox, BT_MBOX_SEND, 1u << BT_PMIC_ID);
++	for (wait = 0; wait < 50000; wait++) {
++		uint32_t reply = 0;
++		err = bt_acpm_drain(request, &reply, &matched);
++		if (err) {
++			return err;
++		}
++		if (matched) {
++			uint8_t status = (uint8_t)(reply >> 24);
++			printf("BLUEJAY ACPM: seq=%u func=%u reg=%02x status=%02x value=%02x\n",
++			    bt.seq, func, reg, status, (unsigned)((reply >> 8) & 0xff));
++			if (status) {
++				return EIO;
++			}
++			if (out) {
++				*out = (uint8_t)(reply >> 8);
++			}
++			return 0;
++		}
++		delay(10);
++	}
++	printf("BLUEJAY ACPM: timeout ID2 seq=%u status=%#x\n",
++	    bt.seq, bt_read(bt.mbox, BT_MBOX_STATUS));
++	/* Caller stops on error; never reuse a timed-out sequence. */
++	return ETIMEDOUT;
++}
++
++static int
++bt_power(void)
++{
++	int err = bt_acpm_open();
++	uint8_t before[2] = { 0 }, after[2] = { 0 };
++	const uint8_t regs[2] = { 0x5c, 0x5d }, values[2] = { 0xec, 0xfc };
++	for (unsigned i = 0; i < 2 && !err; i++) {
++		err = bt_acpm_xfer(0, regs[i], 0, &before[i]);
++	}
++	for (unsigned i = 0; i < 2 && !err; i++) {
++		if (before[i] != values[i]) {
++			err = bt_acpm_xfer(1, regs[i], values[i], NULL);
++		}
++	}
++	if (!err) {
++		bt_wait(30);
++	}
++	for (unsigned i = 0; i < 2 && !err; i++) {
++		err = bt_acpm_xfer(0, regs[i], 0, &after[i]);
++		if (!err && after[i] != values[i]) {
++			err = EIO;
++		}
++	}
++	printf("BLUEJAY TOUCH: ACPM rails rc=%d L25=%02x->%02x L26=%02x->%02x\n",
++	    err, before[0], after[0], before[1], after[1]);
++	bt_acpm_close();
++	return err;
++}
++
++static int
++bt_take_pins(void)
++{
++	bt.gpp = ml_io_map(BT_GPP_PA, 0x1000);
++	bt.irq = ml_io_map(BT_IRQ_PA, 0x1000);
++	bt.aoc = ml_io_map(BT_AOC_PA, 0x1000);
++	if (!bt.gpp || !bt.irq || !bt.aoc) {
++		return ENOMEM;
++	}
++	for (unsigned i = 0; i < 3; i++) {
++		bt.saved_spi[i] = bt_read(bt.gpp, BT_SPI_BANK + i * 4);
++		bt.saved_reset[i] = bt_read(bt.gpp, BT_RESET_BANK + i * 4);
++		bt.saved_irq[i] = bt_read(bt.irq, BT_IRQ_BANK + i * 4);
++	}
++	bt.pins_taken = true;
++	/* Request AP ownership before remuxing the shared SPI pins. */
++	bt_update(bt.gpp, BT_RESET_BANK + BT_DAT, 2, 0);
++	bt_update(bt.gpp, BT_RESET_BANK + BT_CON, 0xf0, 0x10);
++	bt_update(bt.gpp, BT_RESET_BANK + BT_PUD, 0xf0, 0);
++	unsigned wait;
++	for (wait = 0; wait < 500; wait++) {
++		if (!(bt_read(bt.aoc, BT_AOC_BANK + BT_DAT) & (1u << 6))) {
++			break;
++		}
++		bt_wait(1);
++	}
++	printf("BLUEJAY TOUCH: bus AP->AOC=%u AOC->AP=%u wait=%ums\n",
++	    (bt_read(bt.gpp, BT_RESET_BANK + BT_DAT) >> 1) & 1u,
++	    (bt_read(bt.aoc, BT_AOC_BANK + BT_DAT) >> 6) & 1u, wait);
++	if (wait == 500) {
++		return ETIMEDOUT;
++	}
++	/* Preload idle CS/CLK before switching from hardware SPI to GPIO. */
++	bt_update(bt.gpp, BT_SPI_BANK + BT_DAT, 0xf, BT_CS | BT_CLK);
++	bt_update(bt.gpp, BT_SPI_BANK + BT_CON, 0xffff, 0x1011);
++	/* GS101 has FOUR pull bits per pin, including MISO at bits8..11. */
++	bt_update(bt.gpp, BT_SPI_BANK + BT_PUD, 0xffff, 0x3300);
++	bt_update(bt.irq, BT_IRQ_BANK + BT_CON, 0xf, 0);
++	bt_update(bt.irq, BT_IRQ_BANK + BT_PUD, 0xf, 3);
++	bt_update(bt.gpp, BT_RESET_BANK + BT_DAT, 1, 0);
++	bt_update(bt.gpp, BT_RESET_BANK + BT_CON, 0xf, 1);
++	bt_update(bt.gpp, BT_RESET_BANK + BT_PUD, 0xf, 0);
++	return 0;
++}
++
++static void
++bt_restore_pins(void)
++{
++	if (!bt.pins_taken) {
++		return;
++	}
++	bt_update(bt.gpp, BT_SPI_BANK + BT_DAT, 0xf, BT_CS | BT_CLK);
++	/* Restore SPI/reset before returning bus request to the inherited state. */
++	const uint32_t spi_masks[3] = { 0xffff, 0xf, 0xffff };
++	const uint32_t reset_masks[3] = { 0xf, 1, 0xf };
++	for (unsigned i = 0; i < 3; i++) {
++		bt_update(bt.gpp, BT_SPI_BANK + i * 4, spi_masks[i], bt.saved_spi[i]);
++		bt_update(bt.gpp, BT_RESET_BANK + i * 4, reset_masks[i], bt.saved_reset[i]);
++		bt_update(bt.irq, BT_IRQ_BANK + i * 4, i == 1 ? 1 : 0xf, bt.saved_irq[i]);
++	}
++	bt_update(bt.gpp, BT_RESET_BANK + BT_DAT, 2, bt.saved_reset[1]);
++	bt_update(bt.gpp, BT_RESET_BANK + BT_CON, 0xf0, bt.saved_reset[0]);
++	bt_update(bt.gpp, BT_RESET_BANK + BT_PUD, 0xf0, bt.saved_reset[2]);
++	bt.pins_taken = false;
++}
++
++static void
++bt_spi_pin(uint32_t pin, bool high)
++{
++	bt_update(bt.gpp, BT_SPI_BANK + BT_DAT, pin, high ? pin : 0);
++}
++
++static uint8_t
++bt_spi_byte(uint8_t tx)
++{
++	uint8_t rx = 0;
++	for (int bit = 7; bit >= 0; bit--) {
++		if (bt.mode == 3) {
++			bt_spi_pin(BT_CLK, false);
++		}
++		bt_spi_pin(BT_MOSI, (tx & (1u << bit)) != 0);
++		delay(1);
++		bt_spi_pin(BT_CLK, true);
++		delay(1);
++		if (bt_read(bt.gpp, BT_SPI_BANK + BT_DAT) & BT_MISO) {
++			rx |= (uint8_t)(1u << bit);
++		}
++		if (bt.mode == 0) {
++			bt_spi_pin(BT_CLK, false);
++		}
++		delay(1);
++	}
++	return rx;
++}
++
++static void
++bt_spi_begin(void)
++{
++	bt_spi_pin(BT_CLK, bt.mode == 3);
++	delay(1);
++	bt_spi_pin(BT_CS, false);
++	delay(1);
++}
++
++static void
++bt_spi_end(void)
++{
++	bt_spi_pin(BT_CS, true);
++	delay(1);
++	bt_spi_pin(BT_CLK, bt.mode == 3);
++}
++
++static void
++bt_hw_write(uint32_t addr, uint8_t value)
++{
++	bt_spi_begin();
++	(void)bt_spi_byte(0xfa);
++	for (int shift = 24; shift >= 0; shift -= 8) {
++		(void)bt_spi_byte((uint8_t)(addr >> shift));
++	}
++	(void)bt_spi_byte(value);
++	bt_spi_end();
++	delay(20);
++}
++
++static void
++bt_hw_read(uint32_t addr, uint8_t *data, unsigned size)
++{
++	bt_spi_begin();
++	(void)bt_spi_byte(0xfb);
++	for (int shift = 24; shift >= 0; shift -= 8) {
++		(void)bt_spi_byte((uint8_t)(addr >> shift));
++	}
++	(void)bt_spi_byte(0); /* SPI read dummy */
++	for (unsigned i = 0; i < size; i++) {
++		data[i] = bt_spi_byte(0);
++	}
++	bt_spi_end();
++}
++
++static void
++bt_scan_on(void)
++{
++	bt_spi_begin();
++	(void)bt_spi_byte(0xa0);
++	(void)bt_spi_byte(0x00);
++	(void)bt_spi_byte(0x01);
++	bt_spi_end();
++}
++
++static void
++bt_fifo_read(uint8_t *events, unsigned count)
++{
++	bt_spi_begin();
++	(void)bt_spi_byte(0x87);
++	(void)bt_spi_byte(0); /* Not part of the first 8-byte event. */
++	for (unsigned i = 0; i < count * BT_EVENT_SIZE; i++) {
++		events[i] = bt_spi_byte(0);
++	}
++	bt_spi_end();
++}
++
++static int
++bt_controller_start(unsigned mode)
++{
++	bt.mode = mode;
++	bt_spi_pin(BT_CS, true);
++	bt_spi_pin(BT_CLK, mode == 3);
++	bt_update(bt.gpp, BT_RESET_BANK + BT_DAT, 1, 0);
++	bt_wait(15);
++	bt_update(bt.gpp, BT_RESET_BANK + BT_DAT, 1, 1);
++	bt_wait(120);
++	bt_hw_write(0x20000024, 0x81);
++	bt_wait(20);
++	/* FTM5 four-wire interface setup from the working Windows driver. */
++	bt_hw_write(0x20000032, 0x10);
++	bt_hw_write(0x20000034, 0x02);
++	bt_hw_write(0x2000003e, 0x70);
++	bt_hw_write(0x2000003f, 0x07);
++	bt_hw_write(0x2000003d, 0x30);
++	bt_hw_write(0x2000002d, 0x02);
++	bt_wait(20);
++	uint8_t id[2], fw[2], icr, crc;
++	bt_hw_read(0x20000000, id, sizeof(id));
++	printf("BLUEJAY TOUCH: SPI mode%u chip=%02x:%02x IRQ=%u\n", mode, id[0], id[1],
++	    bt_read(bt.irq, BT_IRQ_BANK + BT_DAT) & 1u);
++	if (id[0] != 0x36 || id[1] != 0x48) {
++		return ENODEV;
++	}
++	bt_hw_read(0x20000004, fw, sizeof(fw));
++	bt_hw_read(0x2000002d, &icr, 1);
++	bt_hw_read(0x20000078, &crc, 1);
++	printf("BLUEJAY TOUCH: FTM5 firmware=%02x:%02x SPI4=%02x CRC=%02x\n",
++	    fw[0], fw[1], icr, crc);
++	if (!(icr & 2u)) {
++		return EPROTO;
++	}
++	/* Drain boot status, retaining it in debug logs, before sensing. */
++	uint8_t event[BT_EVENT_SIZE];
++	for (unsigned i = 0; i < BT_FIFO_DEPTH; i++) {
++		bt_fifo_read(event, 1);
++		if (event[0] == 0 || event[0] == 0xff) {
++			break;
++		}
++		printf("BLUEJAY TOUCH: boot FIFO %02x %02x %02x %02x %02x %02x %02x %02x\n",
++		    event[0], event[1], event[2], event[3], event[4], event[5], event[6], event[7]);
++		if (!(event[7] & 0x1f)) {
++			break;
++		}
++	}
++	bt_scan_on();
++	bt_wait(20);
++	return 0;
++}
++
++static void
++bt_release_all(void)
++{
++	for (unsigned id = 0; id < BT_CONTACTS; id++) {
++		if (bt.active & (1u << id)) {
++			sweet_hid_touch((int)id, 0, bt.x[id], bt.y[id]);
++			bt.reports++;
++		}
++	}
++	bt.active = 0;
++}
++
++static int
++bt_event(const uint8_t *e)
++{
++	if (e[0] == 0) {
++		return 0;
++	}
++	if ((e[0] & 3u) != 3u || e[0] == 0xff) {
++		return EPROTO;
++	}
++	bt.events++;
++	if (bt.debug) {
++		printf("BLUEJAY TOUCH: FIFO %02x %02x %02x %02x %02x %02x %02x %02x\n",
++		    e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
++	}
++	unsigned type = e[0] & 0xf3u;
++	if (type == 0x03 || type == 0xf3) {
++		bt_release_all();
++		/* The polling caller restarts active scan after reset/error events. */
++		return EAGAIN;
++	}
++	if (type != 0x13 && type != 0x23 && type != 0x33) {
++		return 0; /* Firmware status, echo, user and debug events. */
++	}
++	unsigned id = e[1] >> 4, tool = e[1] & 0xfu;
++	if (id >= BT_CONTACTS) {
++		return EPROTO;
++	}
++	bool down = type != 0x33 && (tool == 1 || tool == 2 || tool == 3);
++	int x = bt.x[id], y = bt.y[id];
++	if (down) {
++		x = e[2] | ((e[3] & 0x0f) << 8);
++		y = (e[4] << 4) | (e[3] >> 4);
++		if (x > 1079 || y > 2399) {
++			return EPROTO;
++		}
++		bt.x[id] = x;
++		bt.y[id] = y;
++		bt.active |= 1u << id;
++	} else {
++		bt.active &= ~(1u << id);
++	}
++	sweet_hid_touch((int)id, down, x, y);
++	bt.reports++;
++	return 0;
++}
++
++static int
++bt_poll(void)
++{
++	uint8_t events[BT_FIFO_DEPTH * BT_EVENT_SIZE];
++	bt_fifo_read(events, 1);
++	if (events[0] == 0) {
++		return 0;
++	}
++	if (events[0] == 0xff || (events[0] & 3u) != 3u) {
++		return EPROTO;
++	}
++	unsigned remaining = events[7] & 0x1fu;
++	if (remaining) {
++		bt_fifo_read(events + BT_EVENT_SIZE, remaining);
++	}
++	int err = 0;
++	bool rescan = false;
++	for (unsigned i = 0; i <= remaining; i++) {
++		int result = bt_event(events + i * BT_EVENT_SIZE);
++		if (result == EAGAIN) {
++			rescan = true;
++		} else if (result) {
++			err = result;
++		}
++	}
++	if (rescan) {
++		bt_scan_on();
++	}
++	return err;
++}
++
++static void
++bt_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	int err = bt_take_pins();
++	if (!err) {
++		err = bt_power();
++	}
++	if (!err) {
++		unsigned mode = bt.mode;
++		err = bt_controller_start(mode);
++		if (err) {
++			err = bt_controller_start(mode == 3 ? 0 : 3);
++		}
++	}
++	if (err) {
++		printf("BLUEJAY TOUCH: initialization failed rc=%d; iOS boot continues\n", err);
++		bt_restore_pins();
++		goto out;
++	}
++	while (!sweet_hid_touch_ready()) {
++		bt_wait(100);
++	}
++	printf("BLUEJAY TOUCH: FTM5 online, GPIO SPI mode%u AP bus, 1080x2400, 10 contacts, poll4ms\n",
++	    bt.mode);
++	unsigned ticks = 0, bad = 0, idle = 0;
++	while (true) {
++		uint32_t irq = bt_read(bt.irq, BT_IRQ_BANK + BT_DAT) & 1u;
++		bt.polls++;
++		if (!(bt_read(bt.aoc, BT_AOC_BANK + BT_DAT) & (1u << 6))) {
++			if (!irq || bt.active || (ticks % 25) == 0) {
++				err = bt_poll();
++				if (err) {
++					bt.errors++;
++					if (++bad == 10) {
++						bt_release_all();
++					}
++					if (bad <= 10 || bad % 250 == 0) {
++						printf("BLUEJAY TOUCH: FIFO error=%d streak=%u IRQ=%u\n", err, bad, irq);
++					}
++				} else {
++					bad = 0;
++				}
++			}
++			if (!bt.active && ++idle >= 250) {
++				idle = 0;
++				bt_scan_on();
++			} else if (bt.active) {
++				idle = 0;
++			}
++		} else {
++			bt_release_all();
++			if (ticks % 250 == 0) {
++				printf("BLUEJAY TOUCH: AOC has not granted bus; SPI paused\n");
++			}
++		}
++		if (++ticks % 2500 == 0) {
++			printf("BLUEJAY TOUCH: alive polls=%u events=%u reports=%u active=%#x errors=%u IRQ=%u\n",
++			    bt.polls, bt.events, bt.reports, bt.active, bt.errors, irq);
++		}
++		bt_wait(4);
++	}
++out:
++	(void)thread_terminate(current_thread());
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++void
++bluejay_touch_init(void)
++{
++	if (bt.started) {
++		return;
++	}
++	bt.started = true;
++	int enabled = 1, mode = 3;
++	bt.debug = 1;
++	PE_parse_boot_argn("sweettouch", &enabled, sizeof(enabled));
++	PE_parse_boot_argn("bluejaytouchmode", &mode, sizeof(mode));
++	PE_parse_boot_argn("bluejaytouchdebug", &bt.debug, sizeof(bt.debug));
++	bt.mode = mode == 0 ? 0 : 3;
++	if (!enabled) {
++		printf("BLUEJAY TOUCH: disabled (sweettouch=0)\n");
++		return;
++	}
++	thread_t thread;
++	kern_return_t kr = kernel_thread_start(bt_thread, NULL, &thread);
++	if (kr == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	} else {
++		printf("BLUEJAY TOUCH: kernel_thread_start failed %d\n", kr);
++	}
++}
++#endif /* ARM64_BOARD_CONFIG_BLUEJAY */
