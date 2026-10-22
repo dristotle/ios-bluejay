@@ -174,6 +174,30 @@ logo. SpringBoard remains blocked in startup; home screen unverified.
   Decode slide0x5387c000 cache stacks; DataMigration/activation are possibilities
   pending symbols. Phone now adb recovery, iOS userdata not mounted in Linux.
   Original immutable16GiB root remains intact; never reformat/reflash it.
+- **Apple-logo startup wait identified; focused diagnostic running:**
+  Extended samples symbolicated with per-framework symbols from the existing
+  read-only SystemOS DMG087-86593-047 (no Apple files added to git).
+  SpringBoard main waits on os_unfair_lock in _LSContextInitCommon while
+  ControlCenterServices filters module metadata via LSApplicationRecord.
+  SpringBoard t1 and backboardd t8 are in
+  __LAUNCH_SERVICES_IS_RESEEDING_ITS_DATABASE_AND_MAY_BLOCK__ ->
+  _LSCopyServerStore synchronous XPC. This is a LaunchServices application
+  database startup/reseed wait, not a proven migration/activation failure.
+  Evidence Windows boot-0083-ios-v1-nowdt-stacks.txt.
+  ipsw3.1.739 downloaded/checksum verified in research/ipsw-tool. Full a2s
+  fails in ObjC metadata with huge allocation; per-framework dyld macho -n
+  works. Cache source research/ios-mounts/sysos/root/System/Library/Caches/
+  com.apple.dyld/dyld_shared_cache_arm64 (apfs-fuse RO, may need remount if WSL
+  restarts); image map research/ios16-cache-info.json. Symbols in
+  research/ios16-*-symbols.txt; raw root remains immutable.
+  New same-kernel/ADT payload changes ONLY443byte boot args: sweetsample and
+  sweetnull select lsd,installd,installcoordinationd,containermanagerd,
+  mobileactivationd,SpringBoard,backboardd,logd,amfid. Watchdogs/reset disabled.
+  Image bluejay-xnu-0083-ios-v1-lsd.img,7081984bytes,SHA256
+  f955b5a7052aa9841c8b80329faf51735524936ac07bbd0bfff78221dfcbade0.
+  fastboot boot accepted13:06:12UTC,send0.172s/boot0.005s,total0.186s.
+  User asked to wait >=3minutes then return to recovery and report screen.
+  Next pull boot-0083-ios-v1-lsd persistent log and decode server stacks.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
@@ -245,11 +269,12 @@ logo. SpringBoard remains blocked in startup; home screen unverified.
   including bounded OS ZIP member via ipsw-slice. Copy running into sparse
   research/ios16-bluejay-v1.img (16GiB logical); no device writes.
 
-Next: symbolicate the extended boot samples (shared-cache slide0x5387c000)
-to identify SpringBoard's startup IPC wait. Read Apple cache from the existing
-IPSW/root image; no new kernel CI needed for symbols. Then fix the observed
-startup dependency and temporary-boot a watchdog-disabled image again.
-Phone is in adb recovery, latest code/notes9559a5b on dristotle fork only.
+Next: focused LaunchServices diagnostic0083-ios-v1-lsd is running on phone.
+Wait for user to return to recovery after >=3minutes; pull its persistent log
+with Windows pull-bluejay-xnu-log.py boot-0083-ios-v1-lsd. Decode lsd and
+dependencies to fix the observed LaunchServices database reseed wait.
+Keep watchdog-disabled shim on all subsequent temporary images. No kernel
+change/CI required for current diagnostic. Fork only; no upstream push/merge.
 Do not recopy/reformat/reflash the completed local/installed root.
 
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
