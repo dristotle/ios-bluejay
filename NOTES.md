@@ -2,8 +2,9 @@
 
 This section supersedes upstream sweet observations below. Objective: boot
 real iPhone X iOS 16.7.16 (20H392) userland and XNU on Pixel 6a bluejay.
-Real BLUEJAY XNU now reaches its framebuffer console and VM/IOKit
-initialization. No iOS userland boot on bluejay achieved yet.
+Real BLUEJAY XNU boots the installed HFSX root and runs Apple launchd,
+backboardd and other iOS daemons on four A55 cores. A usable iOS GUI
+has not been observed; the first root boot reset while working.
 
 - Checkout `/home/catto/ios-bluejay`, branch `bluejay-port`, upstream 425b251.
   Build fork `dristotle/ios-sweet`, authenticated as dristotle.
@@ -93,24 +94,57 @@ initialization. No iOS userland boot on bluejay achieved yet.
   SHA25620b07dd145f964cf6e81f89188f94e922cd030fa07a031eead927f46a1d8746e;
   kernel0083, CPU alias ADT, cpus4/rd=ufsroot0/ufsrw1/rootrw1, upstream
   ignition/launchd arguments, ufslogsecs2. Not booted yet.
-- **2026-10-22 resumed; fastboot userdata flash running:** saved sparse
-  file ios16-bluejay-v1.simg12161842172bytes/29306chunks independently
-  parsed natively, all16GiB decoded, complete RAW/zero-FILL coverage.
-  Decoded hash matches immutable verified root; sparse SHA256f93a24b968c392f90d888ab5eef5ab1a479a41b8a7dd366abeced35b71df8040.
-  User authorized fastboot flashing.512MiB split rejected at download
-  with unsupported image size, before a flash.128MiB split accepted:
-  root-fastboot-flash-128m.log,93parts, send+write OKAY so far.
-  Exec session86685; flash helper returns to recovery afterwards.
-  Do not boot or interrupt during flashing. Readback verification pending:
-  Windows verify-bluejay-root-native.py hashes first16GiB on device and
-  compares win/esp/GPT/layout baseline. Prepared0083-ios-v1 not booted yet.
-  Initial bounded adb stdin writer failed early with truncated RAW;
-  native32MiB RAM-only test reproduces Ctrl-Z truncation at26bytes.
-  Length-framed local adb-forward socket passed full32MiB hash but user
-  preferred fastboot. Userdata partial until flash+readback complete.
-  Protected post-root snapshot MATCH before new flash; no win/esp/GPT
-  writes. Read-only boot-a backup64MiB SHA256
+- **iOS root installed + full readback verified, 2026-10-22:**
+  fastboot -S128M flash userdata ios16-bluejay-v1.simg93/93 parts completed
+  successfully429.846s.512MiB attempt rejected before writing (unsupported
+  image size). No GPT/boot/recovery/calibration/modem/win/esp writes.
+  Recovery readback of all17179869184bytes SHA256 MATCH
+  f34aaadd00d92a2a3a3d3bb4d403671c895b8b648e4dc30c5581b85ffc1096fb.
+  Exact GPT+backup GPT, full esp hash, win/esp endpoint4MiB samples and
+  partition layout MATCH saved protected baseline. Evidence Windows
+  ios16-bluejay-v1-install.json/protected-post-root.json and flash log
+  root-fastboot-flash-128m.log. userdata now contains complete iOS HFSX root.
+  Sparse12161842172bytes/29306chunks, full16GiB RAW/zero-FILL coverage,
+  SHA256f93a24b968c392f90d888ab5eef5ab1a479a41b8a7dd366abeced35b71df8040.
+  Initial adb stdin writer failed early (native binary input Ctrl-Z at26
+  bytes); protected hashes stayed intact, superseded by verified flash.
+  Read-only boot-a backup64MiB SHA256
   69dc5735bc1e98ede4f9eaf7c4dca4bab66cd3a707f5f567ff407758f560cae1.
+- **First real iOS UFS-root boot accepted, 2026-10-22:**
+  Windows bluejay-xnu-0083-ios-v1.img, SHA256
+  20b07dd145f964cf6e81f89188f94e922cd030fa07a031eead927f46a1d8746e;
+  fastboot boot send0.173s/boot0.005s/total0.185s OKAY. Kernel0083+CPU alias
+  ADT, cpus4 rd=ufsroot0 ufsrw1 rootrw1 ignition1 launchd_unsecure_cache1
+  unentitled_ios_sim_launch1 wdt=-1 wdt_test=no_user_checkin ufslogsecs2.
+  Persistent log in last1025blocks of userdata (outside16GiB HFS volume).
+  Phone screen/photo request pending; no real launchd/GUI success claimed.
+  Read log via Windows pull-bluejay-xnu-log.py boot-0083-ios-v1 after
+  recovery returns. USB/touch/real battery drivers still guarded off.
+- **Apple iOS userspace observed, 2026-10-22:**
+  User reports first real root boot reset while doing work, requests disabling
+  watchdogs and the 40second diagnostic reset. Persistent log saved as Windows
+  boot-0083-ios-v1.bin/.txt: total91338bytes, flush14. Logs show Apple launchd,
+  watchdogd, backboardd and many daemons executing from the verified HFSX root.
+  IOWatchdog stand-in accepts checkins and never fires. No panic/software
+  reboot request found in saved log; it ends with repeated IOAcceleratorES
+  matches returning0. Do not infer SpringBoard/GUI success from this.
+- **Watchdog-disable image built, 2026-10-22:**
+  Actual recovery DT research/bluejay-recovery-live.dts confirms cl0/cl1
+  watchdog MMIO10060000/10070000,100byte ranges, timeout30seconds, PMU17460000.
+  Bluejay shim now clears WTCON bits5(enable),2(IRQ),0(reset), acknowledges
+  WTCLRINT and checks both readbacks before handing off to existing kernel0083.
+  Clock/divider/debug bits preserved, based on Linux s3c2410wdt_stop sequence.
+  Displays original/stopped WTCON and read-only PMU reset-status17463b44.
+  Bluejay diagnostic/exception reset() now parks indefinitely; no timed PSCI
+  reset. The original reset40 path ran only if loader returned or excepted,
+  never concurrently with successful XNU execution. Hardware watchdog expiry
+  remains a hypothesis pending controlled boot, not a proven reset cause.
+  Temp image bluejay-xnu-0083-ios-v1-nowdt.img,7081984bytes, SHA256
+  aa240956e47a8297413945f82912e590506d40d7b28136f45569d01ed4794f36.
+  Same kernel, ADT, payload and root; only shim code changed. Header-v4,
+  legacy-LZ4 roundtrip/Image-size verifier passed; no C ABS64 relocations;
+  legacy Sweet shim still cross-compiles. Next: temporary fastboot boot and
+  observe survival beyond reset interval; no reflashing/reformatting root.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
@@ -122,7 +156,7 @@ initialization. No iOS userland boot on bluejay achieved yet.
   Protected baseline C:/Users/Catto/ios-bluejay-artifacts/protected-pre-root.json:
   exact6-block GPT matches old backup (old34-block dump also includes persist),
   backup GPT, esp full hash, win/esp first/last4MiB samples and layout saved.
-  No protected writes; no userdata installation yet.
+  No protected writes; complete userdata install now verified above.
 - User explicitly allows wiping userdata. Never modify win, esp, GPT,
   boot/recovery, calibration or modem partitions. Use temporary fastboot boot.
 - Verified userdata sda27: start 18321200, size 118397552 in 512-byte units;
@@ -182,9 +216,8 @@ initialization. No iOS userland boot on bluejay achieved yet.
   including bounded OS ZIP member via ipsw-slice. Copy running into sparse
   research/ios16-bluejay-v1.img (16GiB logical); no device writes.
 
-Next: let fastboot128MiB split flash finish. Verify full16GiB readback
-SHA256 and protected baseline in recovery,
-then temporary boot bluejay-xnu-0083-ios-v1.img.
+Next: inspect first0083-ios-v1 phone screen and persistent console log
+after recovery returns. Diagnose real launchd/iOS path from actual output.
 Inspect persistent logs/photos; continue to real iOS launchd and SpringBoard.
 
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes

@@ -101,17 +101,55 @@ static void delay_ms(unsigned ms)
 		;
 }
 
+#if defined(SHIM_BLUEJAY)
+/* GS101 resources from bluejay's recovery FDT. Stop sequence follows
+ * __s3c2410wdt_stop(): preserve clock/divider bits, clear enable/reset.
+ * Also mask the interrupt and acknowledge any pending expiry before XNU
+ * takes over; XNU's IOWatchdog stand-in does not service these timers. */
+#define GS101_WDT_CL0		0x10060000UL
+#define GS101_WDT_CL1		0x10070000UL
+#define GS101_PMU_RST_STAT	0x17463b44UL
+#define GS101_WTCON		0x00
+#define GS101_WTCLRINT		0x0c
+#define GS101_WTCON_ACTIVE	((1U << 5) | (1U << 2) | (1U << 0))
+
+static int bluejay_watchdogs_stop(void)
+{
+	uint32_t old0 = rd32(GS101_WDT_CL0 + GS101_WTCON);
+	uint32_t old1 = rd32(GS101_WDT_CL1 + GS101_WTCON);
+	wr32(GS101_WDT_CL0 + GS101_WTCON, old0 & ~GS101_WTCON_ACTIVE);
+	wr32(GS101_WDT_CL1 + GS101_WTCON, old1 & ~GS101_WTCON_ACTIVE);
+	__asm__ volatile("dsb sy" ::: "memory");
+	wr32(GS101_WDT_CL0 + GS101_WTCLRINT, 1);
+	wr32(GS101_WDT_CL1 + GS101_WTCLRINT, 1);
+	__asm__ volatile("dsb sy" ::: "memory");
+	uint32_t stopped0 = rd32(GS101_WDT_CL0 + GS101_WTCON);
+	uint32_t stopped1 = rd32(GS101_WDT_CL1 + GS101_WTCON);
+	con_hex2("WDT CL0", "was=", old0, "now=", stopped0);
+	con_hex2("WDT CL1", "was=", old1, "now=", stopped1);
+	con_hex("RST STAT", rd32(GS101_PMU_RST_STAT));
+	if ((stopped0 | stopped1) & GS101_WTCON_ACTIVE) {
+		con_str("WDT", "stop readback failed; keeping diagnostic screen");
+		return 0;
+	}
+	con_str("WDT", "both hardware watchdogs disabled");
+	return 1;
+}
+#endif
+
 static void __attribute__((noreturn)) reset(unsigned after_s)
 {
 	con_skip();
+#if defined(SHIM_BLUEJAY)
+	(void)after_s;
+	__asm__ volatile("msr daifset, #0xf" ::: "memory");
+	con_str("HALT", "auto reset disabled; hold Power to restart");
+#else
 	con_str("RESET", after_s > 20 ? "in 40s" : "in 20s");
 	delay_ms(after_s * 1000);
-#if !defined(SHIM_BLUEJAY)
 	wr32(IMEM_RESTART_REASON, RESTART_BOOTLOADER);
-#endif
 	__asm__ volatile("dsb sy" ::: "memory");
 	smc(PSCI_SYSTEM_RESET, 0, 0, 0);
-#if !defined(SHIM_BLUEJAY)
 	wr32(PSHOLD, 0);
 #endif
 	for (;;)
@@ -393,6 +431,9 @@ void shim_main(uint64_t dtb)
 	con_hex("MMFR0", rsr("id_aa64mmfr0_el1"));
 	con_hex("CNTFRQ", rsr("cntfrq_el0"));
 	con_hex("PSCI", smc(PSCI_VERSION, 0, 0, 0));
+	stage = "watchdog stop";
+	if (!bluejay_watchdogs_stop())
+		reset(0);
 	stage = "loader";
 	const char *bj_why = loader_boot(dtb);
 	con_str("LOADER", bj_why);
@@ -406,7 +447,7 @@ void shim_main(uint64_t dtb)
 		con_hex("PAR fb", mmu_probe(FB_PHYS));
 	}
 	test_gic();
-	con_str("DONE", "read-only probe; reset in 40s");
+	con_str("DONE", "read-only probe; auto reset disabled");
 	stage = "done";
 	reset(40);
 #endif
