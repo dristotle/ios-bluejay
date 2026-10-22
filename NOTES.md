@@ -117,14 +117,14 @@ has not been observed; the first root boot reset while working.
   ADT, cpus4 rd=ufsroot0 ufsrw1 rootrw1 ignition1 launchd_unsecure_cache1
   unentitled_ios_sim_launch1 wdt=-1 wdt_test=no_user_checkin ufslogsecs2.
   Persistent log in last1025blocks of userdata (outside16GiB HFS volume).
-  Phone screen/photo request pending; no real launchd/GUI success claimed.
-  Read log via Windows pull-bluejay-xnu-log.py boot-0083-ios-v1 after
-  recovery returns. USB/touch/real battery drivers still guarded off.
+  Persistent log pulled after recovery returned; Apple userspace startup
+  verified below. USB/touch/real battery drivers still guarded off.
 - **Apple iOS userspace observed, 2026-10-22:**
   User reports first real root boot reset while doing work, requests disabling
   watchdogs and the 40second diagnostic reset. Persistent log saved as Windows
   boot-0083-ios-v1.bin/.txt: total91338bytes, flush14. Logs show Apple launchd,
-  watchdogd, backboardd and many daemons executing from the verified HFSX root.
+  watchdogd, SpringBoard, backboardd and many daemons executing from the
+  verified HFSX root; backboardd opens AppleCLCD successfully.
   IOWatchdog stand-in accepts checkins and never fires. No panic/software
   reboot request found in saved log; it ends with repeated IOAcceleratorES
   matches returning0. Do not infer SpringBoard/GUI success from this.
@@ -145,6 +145,19 @@ has not been observed; the first root boot reset while working.
   legacy-LZ4 roundtrip/Image-size verifier passed; no C ABS64 relocations;
   legacy Sweet shim still cross-compiles. Next: temporary fastboot boot and
   observe survival beyond reset interval; no reflashing/reformatting root.
+- **Watchdog-disabled hardware boot accepted, 2026-10-22 14:38 local:**
+  Commit ead0592 pushed ONLY to dristotle/ios-sweet bluejay-port; no upstream
+  merge/push. fastboot boot bluejay-xnu-0083-ios-v1-nowdt.img send0.169s,
+  boot0.005s,total0.182s OKAY at 2026-10-22T12:38:28.179959+00:00.
+  Native Windows image SHA256 independently MATCHES aa240956...4f36.
+  At14:43:14local (>4m46s), adb/fastboot both list no phone; no observed
+  recovery return. This does NOT prove active XNU/userspace (could be halted).
+  User photo/screen confirmation after >=2minutes requested and pending.
+  Leave this test running; auto-reset is disabled so user may need to hold
+  Power to restart after a halt. No new flash/partition changes in this test.
+  First boot log already shows exec SpringBoard and AppleCLCD opened by
+  backboardd. Missing IOAcceleratorES polling alone is inconclusive: upstream
+  Sweet also polls without a GPU while CPU rendering can later work.
 - tools/bluejay-root-write.c is a fixed-target recovery RAM writer. Verifies
   userdata resolves to sda27; checks sysfs dynamic device number, first/size,
   protected sda28/29 mapping, mounted state and O_EXCL/BLKGETSIZE64. Each
@@ -216,9 +229,12 @@ has not been observed; the first root boot reset while working.
   including bounded OS ZIP member via ipsw-slice. Copy running into sparse
   research/ios16-bluejay-v1.img (16GiB logical); no device writes.
 
-Next: inspect first0083-ios-v1 phone screen and persistent console log
-after recovery returns. Diagnose real launchd/iOS path from actual output.
-Inspect persistent logs/photos; continue to real iOS launchd and SpringBoard.
+Next: await photo/screen state of the running0083-ios-v1-nowdt test.
+Verify watchdog readbacks and continued operation beyond reset interval.
+After recovery becomes available, pull log with Windows
+pull-bluejay-xnu-log.py boot-0083-ios-v1-nowdt; compare userland, sampler,
+framebuffer swap and panic evidence. Continue toward a visible iOS GUI.
+Do not recopy/reformat/reflash the completed local/installed root.
 
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
