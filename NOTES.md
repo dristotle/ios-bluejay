@@ -15,6 +15,10 @@ delivery requested: rewrite README, save boot/rootfs in the Documents iOS
 folder, and remove generated leftovers. All three are complete. Phone left
 running iOS; no additional device reboot, flash or partition writes.
 
+Canonical fork now `dristotle/ios-bluejay` (renamed by user;GitHub redirect
+confirmed during final push). Branch remains bluejay-port;fork remote
+updated. Historical ios-sweet URLs below redirect to the same fork.
+
 Final release directory:
 `C:/Users/Catto/Documents/stuff for android/bluegay shit/iOS`
 

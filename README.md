@@ -6,7 +6,7 @@ This fork ports Apple's open-source XNU 8796 kernel to Google's GS101/Tensor pla
 
 On **22 October 2026**, the phone reached the real iOS lock screen, the user confirmed touchscreen input, and console text stopped covering the GUI. Debug logging remains enabled and is saved to the persistent log. The successful kernel contains patches **0001–0085**.
 
-The Bluejay work lives in [`dristotle/ios-sweet`, branch `bluejay-port`](https://github.com/dristotle/ios-sweet/tree/bluejay-port). It builds on [dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet), the original Redmi Note 10 Pro port. Hardware details below refer to **Bluejay**; inherited SWEET drivers are not evidence of Pixel support.
+The Bluejay work lives in [`dristotle/ios-bluejay`, branch `bluejay-port`](https://github.com/dristotle/ios-bluejay/tree/bluejay-port). It builds on [dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet), the original Redmi Note 10 Pro port. Hardware details below refer to **Bluejay**; inherited SWEET drivers are not evidence of Pixel support.
 
 ## Verified status
 
@@ -146,7 +146,7 @@ python3 tools/check-bluejay-touch.py PATH_TO_PATCHED_XNU
 
 ## Known successful artifacts
 
-[GitHub Actions run 39795615846, attempt 2](https://github.com/dristotle/ios-sweet/actions/runs/39795615846/attempts/2) built commit **`a61bc40858d544c520c4e9cf357dadc22dbdda0a`**. The user confirmed touch and removal of the console overlay on its first temporary boot.
+[GitHub Actions run 39795615846, attempt 2](https://github.com/dristotle/ios-bluejay/actions/runs/39795615846/attempts/2) built commit **`a61bc40858d544c520c4e9cf357dadc22dbdda0a`**. The user confirmed touch and removal of the console overlay on its first temporary boot.
 
 | Artifact | SHA256 |
 | --- | --- |

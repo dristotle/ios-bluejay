@@ -18,7 +18,7 @@ gh run download RUN_ID -R YOUR_ACCOUNT/ios-sweet -n xnu-kernel -D xnu/out-blueja
 ```
 
 Use your own fork for builds. This port is maintained in
-`dristotle/ios-sweet`, branch `bluejay-port`; never push or merge Bluejay
+`dristotle/ios-bluejay`, branch `bluejay-port`; never push or merge Bluejay
 work into the original `dipa-studio/ios-sweet` repository.
 
 See the [project README](../README.md) for the verified boot image,
